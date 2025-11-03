@@ -44,7 +44,7 @@ async function connectToSlackPage() {
 
 async function main() {
     const { client, slackUrl } = await connectToSlackPage();
-    console.log("[CDP] attached to:", slackUrl);
+    console.log("[ReacLog] attached to:", slackUrl);
 
     const { Network, Fetch } = client;
 
@@ -190,7 +190,7 @@ async function main() {
     });
 
     process.on("SIGINT", async () => {
-        console.log("\n[CDP] closing…");
+        console.log("\n[ReacLog] closing…");
         await client.close();
         process.exit(0);
     });
