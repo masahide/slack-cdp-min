@@ -2,9 +2,9 @@
 
 WSL から Windows 上アプリの **Chrome DevTools Protocol (CDP)** へ安全に接続するための手順とスクリプト一式です。
 
-* 中継（portproxy）: `hack/cdp_portproxy.sh`
-* Slack 起動（CDP有効）: `hack/launch_slack_cdp.sh`
-* Chrome 起動（CDP有効）: `hack/launch_chrome_cdp.sh`
+- 中継（portproxy）: `hack/cdp_portproxy.sh`
+- Slack 起動（CDP有効）: `hack/launch_slack_cdp.sh`
+- Chrome 起動（CDP有効）: `hack/launch_chrome_cdp.sh`
 
 > 僕の意見：
 >
@@ -30,6 +30,7 @@ sudo config --mode normal   # もしくは: sudo config --mode disableInput
 ```bash
 powershell.exe -NoProfile -Command "Start-Process PowerShell -Verb RunAs -ArgumentList '-NoProfile','-Command','sudo config --enable enable; sudo config --mode normal; Write-Host Done; Start-Sleep 1'"
 ```
+
 ---
 
 ## 1. 中継を張る（portproxy）— `hack/cdp_portproxy.sh`
@@ -129,26 +130,26 @@ curl http://$(ip route | awk '/default/ {print $3}'):9333/json/version
 
 ## 4. 使い分けの目安
 
-* **Slack / Electron 系**は `--remote-debugging-address` を無視して 127.0.0.1 固定になることが多い → **portproxy を使う**のが安定。
-* **Chrome**は `--remote-debugging-address` が効く → portproxy なしで **`--bind`（直バインド）**も便利。
-* 既存プロセスの影響を排除したいときは **`--temp`** で一時プロファイル。
+- **Slack / Electron 系**は `--remote-debugging-address` を無視して 127.0.0.1 固定になることが多い → **portproxy を使う**のが安定。
+- **Chrome**は `--remote-debugging-address` が効く → portproxy なしで **`--bind`（直バインド）**も便利。
+- 既存プロセスの影響を排除したいときは **`--temp`** で一時プロファイル。
 
 ---
 
 ## 5. トラブルシュート
 
-* **UNC パス警告が出る / 起動に失敗**
+- **UNC パス警告が出る / 起動に失敗**
+  - Slack 起動は PowerShell Start-Process を使用（UNCの影響なし）
+  - Chrome 起動は `cmd.exe /s /c "cd /d %SystemRoot% & \"<path>\" args"` で UNC を回避済み
 
-  * Slack 起動は PowerShell Start-Process を使用（UNCの影響なし）
-  * Chrome 起動は `cmd.exe /s /c "cd /d %SystemRoot% & \"<path>\" args"` で UNC を回避済み
-* **`remove` しても portproxy が消えない**
+- **`remove` しても portproxy が消えない**
+  - `sudo config --mode normal` を適用してから `./hack/cdp_portproxy.sh remove` を再実行
+  - `show all` に出た `listenaddress` / `listenport` と**完全一致**で削除する
 
-  * `sudo config --mode normal` を適用してから `./hack/cdp_portproxy.sh remove` を再実行
-  * `show all` に出た `listenaddress` / `listenport` と**完全一致**で削除する
-* **`ExecutionPolicy` で .ps1 が実行できない**
+- **`ExecutionPolicy` で .ps1 が実行できない**
+  - 本リポのスクリプトは **標準入力で PowerShell を実行**する方式にしてあり、回避済み
 
-  * 本リポのスクリプトは **標準入力で PowerShell を実行**する方式にしてあり、回避済み
-* **iphlpsvc が停止している**（portproxyが無効）
+- **iphlpsvc が停止している**（portproxyが無効）
 
   ```bash
   powershell.exe -NoProfile -Command "sc query iphlpsvc"
@@ -159,9 +160,9 @@ curl http://$(ip route | awk '/default/ {print $3}'):9333/json/version
 
 ## 6. セキュリティ
 
-* CDP は**認証なし**です。**インターネットへ公開しない**こと。
-* 本手順の Firewall ルールは **WSL サブネット (172.16.0.0/12)** のみに限定。さらに絞るなら `remoteip` を個別IPに。
-* 使い終わったら `./hack/cdp_portproxy.sh remove` で中継口を閉じる運用が安全。
+- CDP は**認証なし**です。**インターネットへ公開しない**こと。
+- 本手順の Firewall ルールは **WSL サブネット (172.16.0.0/12)** のみに限定。さらに絞るなら `remoteip` を個別IPに。
+- 使い終わったら `./hack/cdp_portproxy.sh remove` で中継口を閉じる運用が安全。
 
 ---
 
