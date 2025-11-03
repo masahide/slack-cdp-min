@@ -1,8 +1,10 @@
 import CDP from "chrome-remote-interface";
 import type { Protocol } from "devtools-protocol";
+import fs from "node:fs";
+import path from "node:path";
 
-const HOST = process.env.CDP_HOST || "127.0.0.1";
-const PORT = Number(process.env.CDP_PORT || 9222);
+const DEFAULT_HOST = "127.0.0.1";
+const DEFAULT_PORT = 9222;
 
 const SLACK_API_RE = /https:\/\/[^/]+\.slack\.com\/api\/(chat\.postMessage|reactions\.[a-z]+)/i;
 const SLACK_APP_RE = /https:\/\/app\.slack\.com/i;
@@ -32,6 +34,32 @@ type RespReceivedEvt = {
   requestId: string;
   response: { url: string };
 };
+
+// 1) ファイル（.reaclog/cdp-endpoint.json or CDP_ENDPOINT_FILE）
+// 2) 環境変数（CDP_HOST / CDP_PORT）
+// 3) 既定値（127.0.0.1:9222）
+function resolveEndpoint(): { host: string; port: number } {
+  const file =
+    process.env.CDP_ENDPOINT_FILE || path.resolve(process.cwd(), ".reaclog/cdp-endpoint.json");
+
+  if (fs.existsSync(file)) {
+    try {
+      const j = JSON.parse(fs.readFileSync(file, "utf8"));
+      const host = typeof j.host === "string" && j.host ? j.host : DEFAULT_HOST;
+      const port = Number.isFinite(+j.port) ? Number(j.port) : DEFAULT_PORT;
+      return { host, port };
+    } catch {
+      // 破損時は無視して環境変数へフォールバック
+    }
+  }
+
+  const host = process.env.CDP_HOST || DEFAULT_HOST;
+  const port = Number(process.env.CDP_PORT || DEFAULT_PORT);
+  return { host, port };
+}
+
+const { host: HOST, port: PORT } = resolveEndpoint();
+console.log(`[ReacLog] CDP endpoint -> ${HOST}:${PORT}`);
 
 // ---- Slack の Page ターゲットを列挙から見つける（sessionId 不要の方式）
 async function connectToSlackPage() {

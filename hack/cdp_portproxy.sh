@@ -8,6 +8,8 @@ set -euo pipefail
 #   ./hack/cdp_portproxy.sh remove       # remove 9222（sudo 1回）
 #   ./hack/cdp_portproxy.sh remove 9333  # remove 9333（sudo 1回）
 
+OUT_DIR="${OUT_DIR:-.reaclog}"
+OUT_FILE="${OUT_FILE:-${OUT_DIR}/cdp-endpoint.json}"
 MODE="setup"
 PORT="9222"
 if [[ $# -ge 1 ]]; then
@@ -39,6 +41,7 @@ if [[ "$MODE" == "show" ]]; then
   win_ps "Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { \$_.DisplayName -like 'CDP * from WSL' } | Select-Object DisplayName,Enabled,Direction,Action"
   echo "---- Test ----"
   echo "Test   : curl http://${HOST_IP}:${PORT}/json/version"
+  echo "Config : ${OUT_FILE} $( [[ -f "$OUT_FILE" ]] && echo '(exists)' || echo '(absent)' )"
 
   exit 0
 fi
@@ -86,8 +89,30 @@ Write-Host "[OK] Ready"
 # ==== end elevated block ====
 PS_EOF
 
+mkdir -p "$OUT_DIR"
+
+if [[ "$MODE" == "remove" ]]; then
+  # remove のとき、同じポートを指すファイルなら削除
+  if [[ -f "$OUT_FILE" ]]; then
+    if grep -q "\"port\"[[:space:]]*:[[:space:]]*${PORT}" "$OUT_FILE"; then
+      rm -f "$OUT_FILE"
+      echo "[INFO] Removed endpoint file: $OUT_FILE"
+    fi
+  fi
+else
+  # setup のとき、エンドポイントを書き出し
+  cat >"$OUT_FILE" <<JSON
+{
+  "host": "${HOST_IP}",
+  "port": ${PORT},
+  "updatedAt": "$(date -Iseconds)"
+}
+JSON
+  echo "[INFO] Wrote endpoint file: $OUT_FILE"
+fi
 echo "---------------------------------------------"
 echo "Listen : ${HOST_IP}:${PORT}   (from WSL)"
 echo "Connect: 127.0.0.1:${PORT}    (Windows/Electron actual)"
 echo "Test   : curl http://${HOST_IP}:${PORT}/json/version"
+echo "Config : ${OUT_FILE}"
 echo "---------------------------------------------"
