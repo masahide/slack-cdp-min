@@ -1,0 +1,15 @@
+import CDP from "chrome-remote-interface";
+
+const SLACK_APP_RE = /https:\/\/app\.slack\.com/i;
+
+export async function connectToSlackPage(host: string, port: number) {
+  const targets = await CDP.List({ host, port });
+  const page = targets.find(
+    (t) =>
+      (t.type === "page" || t.type === "webview" || t.type === "other") &&
+      SLACK_APP_RE.test(t.url || "")
+  );
+  if (!page) throw new Error("Slack page target not found. Open app.slack.com in the desktop app.");
+  const client = await CDP({ host, port, target: page });
+  return { client, slackUrl: page.url! };
+}

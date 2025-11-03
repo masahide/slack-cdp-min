@@ -509,3 +509,29 @@ export interface IngestionAdapter {
 - **週次・月次サマリ**、KPT/OKR 連携
 
 ---
+
+## 11. ブラウズ UI (SvelteKit)
+
+- **目的**：`events.jsonl` と日次 Markdown サマリを HTTP 経由で参照できる開発者向けビューア。
+- **スタック**：SvelteKit + Vite（`pnpm` ワークスペース内に `apps/browser` などのサブプロジェクトとして追加）。
+- **起動方法**：
+  - `pnpm --filter browser dev` で `localhost:4173` を起動。
+  - 本番相当は `pnpm --filter browser build && pnpm --filter browser preview`。
+- **データ取得**：
+  - `src/lib/server/data.ts` に JSONL/Markdown 読み込みラッパーを実装。`dataDir` は共通設定 (`reaclog.config.json` or env) から解決。
+  - ルーティング例：
+    - `/`：最新7日分のサマリカード（Slack/GitHub/Git別の件数メタ）。
+    - `/day/[yyyy-mm-dd]`：該当日の `slack/events.jsonl` 等を読み込み、タイムライン形式で表示。
+    - `/day/[yyyy-mm-dd]/raw`：JSONL をそのまま表示（開発者向け）。
+- **UI要件**：
+  - クライアント描画は Svelte コンポーネント。`+page.server.ts` でデータを読み取り `Load` で渡す。
+  - 日跨ぎナビゲーション（前日/翌日）とソースフィルタ（Slack/GitHub/Git）を提供。
+  - 日次 Markdown サマリ（`summaries/daily.md`）がある場合は右カラムでレンダリング。
+- **セキュリティ**：
+  - 初期版はローカルのみ (`0.0.0.0` で listen せず `localhost` 限定)。
+  - 将来的に Basic 認証やトークンゲートを `hooks.server.ts` で追加できる構造にする。
+- **テスト**：
+  - SvelteKit の `vitest` + `@sveltejs/kit/vite` テストを導入し、`dataDir` を tmp フォルダに向けたエンドツーエンド風テストを作成。
+  - `pnpm --filter browser test` をCI `qa` ジョブに連結。
+
+---
