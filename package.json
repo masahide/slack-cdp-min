@@ -9,7 +9,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "test": "node --import tsx --test ./tests/**/*.test.ts",
+    "test": "node --import tsx --test \"./tests/**/*.test.ts\"",
     "qa": "pnpm run typecheck && pnpm run lint && pnpm run format && pnpm run test && pnpm --filter browser exec svelte-kit sync && pnpm --filter browser exec tsc --noEmit && pnpm --filter browser test"
   },
   "devDependencies": {
