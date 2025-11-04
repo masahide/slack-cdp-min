@@ -1,3 +1,11 @@
 {
-	"/": []
+	"/": [
+		"src/routes/+page.server.ts"
+	],
+	"/day/[date]": [
+		"src/routes/day/[date]/+page.server.ts"
+	],
+	"/day/[date]/raw": [
+		"src/routes/day/[date]/raw/+page.server.ts"
+	]
 }
