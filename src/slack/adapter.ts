@@ -17,7 +17,7 @@ export type FetchPausedEvent = {
     postData?: string;
   };
 };
-export type WebSocketFrameReceivedEvent = {
+export type WebSocketFrameEvent = {
   response: { payloadData: string };
 };
 export type ResponseReceivedEvent = {
@@ -35,8 +35,8 @@ type SlackClient = {
     enable(opts: Record<string, unknown>): Promise<void>;
     setCacheDisabled(opts: { cacheDisabled: boolean }): Promise<void>;
     on(
-      name: "webSocketFrameReceived" | "responseReceived",
-      handler: (payload: WebSocketFrameReceivedEvent | ResponseReceivedEvent) => unknown
+      name: "webSocketFrameReceived" | "webSocketFrameSent" | "responseReceived",
+      handler: (payload: WebSocketFrameEvent | ResponseReceivedEvent) => unknown
     ): void;
     getResponseBody(params: {
       requestId: string;
@@ -67,15 +67,290 @@ const DEBUG_TOKENS = (process.env.REACLOG_DEBUG ?? "")
 
 const DEBUG_TARGETS = new Set(DEBUG_TOKENS);
 
-type SlackRepliesResponse = {
-  ok: boolean;
-  messages?: Array<{
-    ts?: string;
-    text?: string;
-    user?: string;
-    blocks?: unknown;
-  }>;
-};
+const DOM_PROBE_DEBUG_ENABLED = DEBUG_TARGETS.has("slack:domprobe");
+const DOM_VERBOSE_ENABLED = DEBUG_TARGETS.has("slack:domprobe");
+const DEBUG_NETWORK_ENABLED =
+  DEBUG_TARGETS.has("slack:network") || DEBUG_TARGETS.has("slack:network:verbose");
+const DEBUG_FETCH_ENABLED =
+  DEBUG_TARGETS.has("slack:fetch") || DEBUG_TARGETS.has("slack:network:verbose");
+const DEBUG_RUNTIME_ENABLED =
+  DEBUG_TARGETS.has("slack:runtime") || DEBUG_TARGETS.has("slack:runtime:verbose");
+const DOM_CAPTURE_DISABLED =
+  (process.env.REACLOG_DISABLE_DOM_CAPTURE ?? "").toLowerCase() === "1" ||
+  (process.env.REACLOG_DISABLE_DOM_CAPTURE ?? "").toLowerCase() === "true";
+
+const REACTION_PAYLOAD_KEYS = [
+  "reaction_added",
+  "reaction_removed",
+  "reactions.add",
+  "reactions.remove",
+];
+
+const DOM_ROOT_SELECTORS = [
+  "[data-message-ts]",
+  "[data-message-id]",
+  '[data-qa="message"]',
+  '[data-qa="message_container"]',
+  '[data-qa="virtual-list-item"]',
+  "[data-qa='message-pane-body'] [role='row']",
+  ".p-message_pane_message",
+  ".c-message_kit__message",
+  ".p-threads_view__thread_container [role='presentation']",
+];
+
+const DOM_BODY_SELECTORS = [
+  '[data-qa="message_content"]',
+  '[data-qa="message-text"]',
+  ".p-rich_text_section",
+  ".c-message__body",
+  ".p-message_pane_message__message",
+  ".p-threads_view__thread_message_body",
+  ".c-message_kit__text",
+  ".p-rich_text_block",
+];
+
+const DOM_CHANNEL_NAME_SELECTORS = [
+  '[data-qa="channel_name_text"]',
+  ".p-top_nav__channel_header__name",
+  ".p-top_nav__conversation_title__name",
+  ".p-classic_nav__model__title__name",
+  ".p-ia__channel_header__info .p-ia__channel_header__name",
+  ".p-workspace_name",
+  "[data-qa='channel_context_bar_channel_name']",
+];
+
+const DOM_RETRY_DELAYS_MS = [0, 100, 200, 300] as const;
+const DOM_EXCERPT_LENGTH = 80;
+const DOM_CACHE_MAX_ENTRIES = 200;
+
+const DOM_CAPTURE_SCRIPT = `(function reaclogCapture(tsList, selectors, debugMode) {
+  try {
+    const toArray = (value) => {
+      if (Array.isArray(value)) return value;
+      return value == null ? [] : [value];
+    };
+    const needles = toArray(tsList)
+      .map((value) => (typeof value === "string" ? value : String(value ?? "")))
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    if (needles.length === 0) {
+      return { status: "no-ts" };
+    }
+    const rootSelectors = Array.isArray(selectors?.root) ? selectors.root : [];
+    const bodySelectors = Array.isArray(selectors?.body) ? selectors.body : [];
+    const channelSelectors = Array.isArray(selectors?.channel) ? selectors.channel : [];
+    const nodes = [];
+    const seen = new Set();
+    const pushNode = (node) => {
+      if (!node || typeof node !== "object") return;
+      if (node.nodeType !== 1) return;
+      if (seen.has(node)) return;
+      seen.add(node);
+      nodes.push(node);
+    };
+    const ensureNodes = (selector) => {
+      if (!selector || typeof selector !== "string") return;
+      try {
+        document.querySelectorAll(selector).forEach((node) => pushNode(node));
+      } catch (err) {}
+    };
+    for (const selector of rootSelectors) {
+      ensureNodes(selector);
+    }
+    if (nodes.length === 0) {
+      ensureNodes("[data-message-id]");
+      ensureNodes("[data-message-ts]");
+      ensureNodes(".c-message_kit__message");
+      ensureNodes(".p-message_pane_message");
+      ensureNodes(".c-virtual_list__item");
+      ensureNodes("[data-qa='virtual-list-item']");
+    }
+    const attr = (element, name) => {
+      if (!element || typeof element.getAttribute !== "function") return "";
+      const value = element.getAttribute(name);
+      return typeof value === "string" ? value : "";
+    };
+    const registerValue = (set, value) => {
+      if (typeof value === "string" && value.length > 0) set.add(value);
+    };
+    const collectTs = (element) => {
+      const values = new Set();
+      const queue = [];
+      const visited = new Set();
+      if (element) queue.push(element);
+      while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current || typeof current !== "object") continue;
+        if (visited.has(current)) continue;
+        visited.add(current);
+        if (current.nodeType !== 1) continue;
+        registerValue(values, attr(current, "data-message-ts"));
+        registerValue(values, attr(current, "data-message-id"));
+        registerValue(values, attr(current, "data-message-ts-normalized"));
+        registerValue(values, attr(current, "data-ts"));
+        registerValue(values, attr(current, "data-qa-ts"));
+        registerValue(values, attr(current, "data-qa-message-id"));
+        registerValue(values, attr(current, "data-sort-key"));
+        if (current.dataset) {
+          for (const key of Object.keys(current.dataset)) {
+            const value = current.dataset[key];
+            if (typeof value === "string" && value) registerValue(values, value);
+          }
+        }
+        if (current.matches && current.matches("time[datetime]")) {
+          registerValue(values, attr(current, "datetime"));
+        }
+        if (typeof current.querySelectorAll === "function") {
+          current
+            .querySelectorAll("[data-message-ts],[data-message-id],[data-ts],[data-qa-ts],time[datetime]")
+            .forEach((child) => queue.push(child));
+        }
+      }
+      return Array.from(values);
+    };
+    const matchesNeedle = (value) =>
+      typeof value === "string" && needles.some((needle) => value.includes(needle));
+    const describeNode = (node, index) => {
+      if (!node || typeof node !== "object") return null;
+      const tag = typeof node.tagName === "string" ? node.tagName.toLowerCase() : null;
+      const classes =
+        typeof node.className === "string" && node.className.length > 0
+          ? node.className.split(/\\s+/).filter(Boolean).slice(0, 10)
+          : [];
+      const attrs = {};
+      if (node.attributes && typeof node.attributes === "object") {
+        const list = Array.from(node.attributes).slice(0, 10);
+        for (const attr of list) {
+          if (attr && typeof attr.name === "string") {
+            attrs[attr.name] = String(attr.value ?? "").slice(0, 160);
+          }
+        }
+      }
+      const dataset = {};
+      if (node.dataset && typeof node.dataset === "object") {
+        const keys = Object.keys(node.dataset).slice(0, 10);
+        for (const key of keys) {
+          dataset[key] = String(node.dataset[key] ?? "").slice(0, 160);
+        }
+      }
+      let datetime = null;
+      if (typeof node.querySelector === "function") {
+        const timeNode = node.querySelector("time[datetime]");
+        if (timeNode && typeof timeNode.getAttribute === "function") {
+          datetime = timeNode.getAttribute("datetime");
+        }
+      }
+      const text =
+        typeof node.innerText === "string"
+          ? node.innerText.trim().slice(0, 120)
+          : typeof node.textContent === "string"
+            ? node.textContent.trim().slice(0, 120)
+            : null;
+      return {
+        index,
+        tag,
+        classes,
+        attrs,
+        dataset,
+        datetime,
+        text,
+      };
+    };
+    const collectSampleTs = () => {
+      if (!debugMode) return undefined;
+      const sample = [];
+      for (const node of nodes) {
+        for (const value of collectTs(node)) {
+          if (!sample.includes(value)) sample.push(value);
+          if (sample.length >= 12) break;
+        }
+        if (sample.length >= 12) break;
+      }
+      return sample;
+    };
+    const collectSamples = () => {
+      if (!debugMode) return undefined;
+      const result = [];
+      const limit = Math.min(nodes.length, 5);
+      for (let i = 0; i < limit; i += 1) {
+        const node = nodes[i];
+        const described = describeNode(node, i);
+        if (described) result.push(described);
+      }
+      return result;
+    };
+    const findTarget = () => {
+      for (const node of nodes) {
+        const values = collectTs(node);
+        if (values.some(matchesNeedle)) return node;
+      }
+      return null;
+    };
+    let target = findTarget();
+    if (!target) {
+      ensureNodes("[data-message-id]");
+      ensureNodes("[data-message-ts]");
+      ensureNodes("[data-qa='message']");
+      ensureNodes("[data-qa='message_container']");
+      ensureNodes(".c-message_kit__message");
+      ensureNodes(".p-message_pane_message");
+      target = findTarget();
+    }
+    if (!target) {
+      return {
+        status: "no-target",
+        needles,
+        candidateCount: nodes.length,
+        sampleTs: collectSampleTs(),
+        samples: collectSamples(),
+      };
+    }
+    let body = null;
+    for (const selector of bodySelectors) {
+      try {
+        const found = target.querySelector(selector);
+        if (found) {
+          body = found;
+          if (found.innerText && found.innerText.trim().length > 0) break;
+        }
+      } catch (err) {}
+    }
+    const source = body || target;
+    const rawText = source?.innerText || source?.textContent || "";
+    const text = typeof rawText === "string" ? rawText.trim() : "";
+    if (!text) {
+      return {
+        status: "empty-text",
+        needles,
+        hasBody: Boolean(body),
+        matchedTs: collectTs(target),
+        samples: collectSamples(),
+      };
+    }
+    let channelName = null;
+    for (const selector of channelSelectors) {
+      try {
+        const found = document.querySelector(selector);
+        if (found && typeof found.textContent === "string") {
+          const value = found.textContent.trim();
+          if (value) {
+            channelName = value;
+            break;
+          }
+        }
+      } catch (err) {}
+    }
+    return {
+      text,
+      channel: channelName,
+      matchedTs: collectTs(target),
+    };
+  } catch (err) {
+    return {
+      error: typeof err === "object" && err && err.message ? err.message : String(err),
+    };
+  }
+})`;
 
 type ExecutionContextDescription = {
   id: number;
@@ -102,6 +377,45 @@ type FrameContextInfo = {
   other: number[];
 };
 
+type ReactionDomCandidate = {
+  channelId?: string | null;
+  ts: string;
+  normalizedTs: string;
+};
+
+type DomSample = {
+  index: number;
+  tag: string | null;
+  classes: string[];
+  attrs: Record<string, string>;
+  dataset: Record<string, string>;
+  datetime: string | null;
+  text: string | null;
+};
+
+type DomEvaluationSuccess = {
+  ok: true;
+  text: string;
+  channelName?: string | null;
+  matchedTs?: string[];
+};
+
+type DomEvaluationFailureReason = "no-target" | "empty-text";
+
+type DomEvaluationFailure = {
+  ok: false;
+  reason: DomEvaluationFailureReason;
+  detail: {
+    needles: string[];
+    candidateCount?: number;
+    sampleTs?: string[];
+    samples?: DomSample[];
+    hasBody?: boolean;
+  };
+};
+
+type DomEvaluationOutcome = DomEvaluationSuccess | DomEvaluationFailure;
+
 export class SlackAdapter implements IngestionAdapter {
   name = "slack";
   private readonly now: () => Date;
@@ -109,9 +423,20 @@ export class SlackAdapter implements IngestionAdapter {
   private emit: EmitFn | null = null;
   private readonly cache: Map<string, { text?: string; user?: string }> = new Map();
   private readonly seenUids: Set<string> = new Set();
-  private readonly debugEnabled = DEBUG_TARGETS.has("slack") || DEBUG_TARGETS.has("slack:verbose");
+  private readonly domCaptureInFlight: Set<string> = new Set();
+  private readonly domCaptureByTs: Map<
+    string,
+    { text: string; channelName?: string | null; capturedAt: number }
+  > = new Map();
+  private readonly debugEnabled =
+    DEBUG_TARGETS.has("slack") || DEBUG_TARGETS.has("slack:verbose") || DOM_PROBE_DEBUG_ENABLED;
   private readonly debugVerboseEnabled = DEBUG_TARGETS.has("slack:verbose");
-  private apiToken: string | null = null;
+  private readonly domProbeEnabled = DOM_PROBE_DEBUG_ENABLED;
+  private readonly domDebugDetailed = DOM_VERBOSE_ENABLED;
+  private readonly domCaptureDisabled = DOM_CAPTURE_DISABLED;
+  private readonly debugNetworkEvents = DEBUG_NETWORK_ENABLED;
+  private readonly debugFetchEvents = DEBUG_FETCH_ENABLED;
+  private readonly debugRuntimeEvents = DEBUG_RUNTIME_ENABLED;
   private readonly contextsByFrame: Map<string, FrameContextInfo> = new Map();
   private readonly frameIdByContext: Map<number, string | null> = new Map();
   private defaultContextId: number | null = null;
@@ -129,27 +454,47 @@ export class SlackAdapter implements IngestionAdapter {
     await Network.setCacheDisabled({ cacheDisabled: true });
     this.debugVerbose("Network domain enabled");
     Network.on("webSocketFrameReceived", (payload) => {
-      this.debugVerbose("webSocketFrameReceived", this.safePreview(payload));
-      this.handleWebSocketFrame(payload as WebSocketFrameReceivedEvent);
+      if (this.debugNetworkEvents) {
+        this.debug("webSocketFrameReceived", this.safePreview(payload));
+      }
+      this.handleWebSocketFrame(payload as WebSocketFrameEvent);
+    });
+    Network.on("webSocketFrameSent", (payload) => {
+      if (this.debugNetworkEvents) {
+        this.debug("webSocketFrameSent", this.safePreview(payload));
+      }
+      this.handleWebSocketFrame(payload as WebSocketFrameEvent);
     });
     Network.on("responseReceived", (payload) => {
-      this.debugVerbose("responseReceived", this.safePreview(payload));
+      if (this.debugNetworkEvents) {
+        this.debug("responseReceived", this.safePreview(payload));
+      }
       void this.handleResponseReceived(payload as ResponseReceivedEvent);
     });
-    await this.ensureApiToken();
 
     if (typeof Runtime.on === "function") {
       Runtime.on("executionContextCreated", (payload) => {
+        if (this.debugRuntimeEvents) {
+          this.debug("executionContextCreated", this.safePreview(payload));
+        }
         this.handleExecutionContextCreated(payload as RuntimeExecutionContextCreatedEvent);
       });
       Runtime.on("executionContextDestroyed", (payload) => {
+        if (this.debugRuntimeEvents) {
+          this.debug("executionContextDestroyed", this.safePreview(payload));
+        }
         this.handleExecutionContextDestroyed(payload as RuntimeExecutionContextDestroyedEvent);
       });
     }
     if (typeof Runtime.enable === "function") {
       await Runtime.enable({});
-    this.debugVerbose("Runtime domain enabled");
-  }
+      this.debugVerbose("Runtime domain enabled");
+    }
+    if (this.domProbeEnabled) {
+      void this.runDomProbe().catch((err) => {
+        this.debug("dom probe failed", this.safePreview(err));
+      });
+    }
 
     await Fetch.enable({
       patterns: [
@@ -160,7 +505,9 @@ export class SlackAdapter implements IngestionAdapter {
     this.debugVerbose("Fetch domain enabled with patterns");
 
     Fetch.on("requestPaused", async (event: FetchPausedEvent) => {
-      this.debugVerbose("requestPaused", this.safePreview(event));
+      if (this.debugFetchEvents) {
+        this.debug("requestPaused", this.safePreview(event));
+      }
       try {
         const normalizedEvents = await this.handleRequest(event);
         for (const normalized of normalizedEvents) {
@@ -189,8 +536,6 @@ export class SlackAdapter implements IngestionAdapter {
       this.debug("parseBody returned null", { url: event.request.url, contentType });
       return [];
     }
-
-    this.rememberToken({ payload, body, headers: event.request.headers });
 
     this.debugVerbose("parsed payload", this.redactPayload(payload));
 
@@ -233,18 +578,12 @@ export class SlackAdapter implements IngestionAdapter {
       const rawItemTs = this.asString(payload.timestamp) ?? this.asString(item?.ts);
       const normalizedItemTs = this.normalizedTimestamp(rawItemTs);
       const fallbackItemTs = this.resolveMessageTs(undefined);
-      const lookupKeys = [rawItemTs, normalizedItemTs, fallbackItemTs]
-        .filter((value): value is string => Boolean(value))
-        .map((value) => this.cacheKey(channelId, value));
-      const cached = lookupKeys
-        .map((key) => this.cache.get(key))
-        .find((entry): entry is { text?: string; user?: string } => Boolean(entry));
       const action = url.pathname.endsWith(".add")
         ? "added"
         : url.pathname.endsWith(".remove")
           ? "removed"
           : "added";
-      const userId = this.asString(payload.user) ?? cached?.user ?? "unknown";
+      const userId = this.asString(payload.user) ?? "unknown";
       const reactionName = this.asString(payload.name) ?? this.asString(payload.reaction);
       const eventTs = this.asString(payload.event_ts);
       const itemTsForEvent = rawItemTs ?? normalizedItemTs ?? fallbackItemTs;
@@ -258,32 +597,29 @@ export class SlackAdapter implements IngestionAdapter {
         return [];
       }
 
-      const fetched =
-        cached ??
-        (await this.fetchMessageFromRuntime({
-          channelId,
-          ts: itemTsForEvent,
-          frameId: event.frameId,
-        }));
-      if (fetched && (fetched.text || fetched.user)) {
-        this.cacheMessage(channelId, itemTsForEvent, {
-          text: fetched.text,
-          user: fetched.user,
-        });
+      const domCaptured = this.consumeDomCapture(itemTsForEvent);
+      if (domCaptured?.text) {
+        this.cacheMessage(channelId, itemTsForEvent, { text: domCaptured.text });
       }
+
+      const lookupKeys = [rawItemTs, normalizedItemTs, fallbackItemTs]
+        .filter((value): value is string => Boolean(value))
+        .map((value) => this.cacheKey(channelId, value));
+      const cached = lookupKeys
+        .map((key) => this.cache.get(key))
+        .find((entry): entry is { text?: string; user?: string } => Boolean(entry));
       const messageText =
-        fetched?.text ??
-        this.asString(payload.message_text) ??
-        (await this.inflateMessage(channelId, itemTsForEvent, event.frameId));
-      const messageUser =
-        fetched?.user ?? cached?.user ?? this.asString(payload.message_user) ?? undefined;
+        domCaptured?.text ?? cached?.text ?? this.asString(payload.message_text) ?? undefined;
+      const messageUser = cached?.user ?? this.asString(payload.message_user) ?? undefined;
+      const channelName = domCaptured?.channelName ?? channelId;
+      const userIdForEvent = cached?.user ?? userId;
 
       const reactionEvent = normalizeSlackReaction(
         {
-          channel: { id: channelId, name: channelId },
+          channel: { id: channelId, name: channelName },
           user: {
-            id: userId,
-            name: messageUser ?? userId,
+            id: userIdForEvent,
+            name: messageUser ?? userIdForEvent,
           },
           item_ts: itemTsForEvent,
           action,
@@ -314,9 +650,10 @@ export class SlackAdapter implements IngestionAdapter {
     return "";
   }
 
-  private handleWebSocketFrame(event: WebSocketFrameReceivedEvent): void {
+  private handleWebSocketFrame(event: WebSocketFrameEvent): void {
     const payload = event.response.payloadData;
     if (!payload || payload.length > 512 * 1024) return;
+    this.captureMessageFromDomIfReaction(payload);
     try {
       const data = JSON.parse(payload);
       if (data?.type === "message" && data.channel && data.ts) {
@@ -333,6 +670,321 @@ export class SlackAdapter implements IngestionAdapter {
     } catch {
       /* ignore JSON parse errors */
     }
+  }
+
+  private captureMessageFromDomIfReaction(rawPayload: string): void {
+    if (this.domCaptureDisabled) return;
+    if (!REACTION_PAYLOAD_KEYS.some((token) => rawPayload.includes(token))) return;
+    for (const candidate of this.extractReactionCandidates(rawPayload)) {
+      this.scheduleDomCapture(candidate);
+    }
+  }
+
+  private extractReactionCandidates(rawPayload: string): ReactionDomCandidate[] {
+    try {
+      const parsed = JSON.parse(rawPayload);
+      const queue: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+      const seen = new Set<string>();
+      const candidates: ReactionDomCandidate[] = [];
+
+      const pushCandidate = (candidate: ReactionDomCandidate | null): void => {
+        if (!candidate) return;
+        const key = candidate.normalizedTs;
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        candidates.push(candidate);
+      };
+
+      const visit = (value: unknown): void => {
+        if (!value || typeof value !== "object") return;
+        if (Array.isArray(value)) {
+          for (const item of value) visit(item);
+          return;
+        }
+        const obj = value as Record<string, unknown>;
+        pushCandidate(this.buildReactionDomCandidate(obj));
+        for (const nested of Object.values(obj)) {
+          visit(nested);
+        }
+      };
+
+      for (const item of queue) visit(item);
+      return candidates;
+    } catch {
+      return [];
+    }
+  }
+
+  private buildReactionDomCandidate(value: Record<string, unknown>): ReactionDomCandidate | null {
+    const type = this.asString(value.type);
+    const subtype = this.asString(value.subtype);
+    const reactionName = this.asString(value.reaction);
+    const indicatesReaction =
+      (type && REACTION_PAYLOAD_KEYS.includes(type)) ||
+      (subtype && REACTION_PAYLOAD_KEYS.includes(subtype)) ||
+      Boolean(reactionName);
+    if (!indicatesReaction) return null;
+
+    const item = value.item as Record<string, unknown> | undefined;
+    const tsCandidate =
+      this.asString(item?.message_ts) ??
+      this.asString(item?.ts) ??
+      this.asString(value.message_ts) ??
+      this.asString(value.event_ts) ??
+      this.asString(value.ts);
+    if (!tsCandidate) return null;
+
+    const channelCandidate =
+      this.asString(value.channel) ??
+      this.asString(value.channel_id) ??
+      this.asString(item?.channel) ??
+      this.asString(item?.channel_id);
+
+    const normalizedTs = this.normalizedTimestamp(tsCandidate) ?? tsCandidate;
+    return {
+      channelId: channelCandidate ?? null,
+      ts: tsCandidate,
+      normalizedTs,
+    };
+  }
+
+  private scheduleDomCapture(candidate: ReactionDomCandidate): void {
+    if (this.domCaptureDisabled) return;
+    const key = candidate.normalizedTs;
+    if (!key) return;
+    if (this.domCaptureInFlight.has(key)) return;
+    this.domCaptureInFlight.add(key);
+    (async () => {
+      try {
+        await this.runDomCapture(candidate);
+      } catch (err) {
+        this.debug("dom capture failed", this.safePreview(err));
+      } finally {
+        this.domCaptureInFlight.delete(key);
+      }
+    })().catch(() => {
+      /* handled in inner scope */
+    });
+  }
+
+  private async runDomCapture(candidate: ReactionDomCandidate): Promise<void> {
+    const { ts, normalizedTs, channelId } = candidate;
+    const variantSet = new Set<string>();
+    if (ts) variantSet.add(ts);
+    if (normalizedTs) variantSet.add(normalizedTs);
+    const normalizedFromTs = this.normalizedTimestamp(ts);
+    if (normalizedFromTs) variantSet.add(normalizedFromTs);
+    const tsVariants = Array.from(variantSet).filter((value) => value.length > 0);
+    if (tsVariants.length === 0) return;
+    let lastFailure: DomEvaluationFailure | null = null;
+    for (const delay of DOM_RETRY_DELAYS_MS) {
+      if (delay > 0) await this.sleep(delay);
+      const outcome = await this.evaluateDomForMessage(tsVariants, this.domDebugDetailed);
+      if (!outcome) continue;
+      if (!outcome.ok) {
+        lastFailure = outcome;
+        continue;
+      }
+      const text = this.asString(outcome.text);
+      if (!text) continue;
+      this.storeDomCapture(
+        candidate,
+        { text, channelName: outcome.channelName, matchedTs: outcome.matchedTs },
+        tsVariants
+      );
+      if (channelId) {
+        this.cacheMessage(channelId, normalizedTs, { text });
+      }
+      const excerpt = this.toExcerpt(text);
+      const channelLabel = channelId ?? outcome.channelName ?? null;
+      console.log(
+        JSON.stringify({
+          ok: true,
+          ts: normalizedTs,
+          channel: channelLabel,
+          excerpt,
+        })
+      );
+      return;
+    }
+    if (this.domDebugDetailed && lastFailure) {
+      this.logDomFailure(normalizedTs, lastFailure);
+    }
+    console.log(
+      JSON.stringify({
+        ok: false,
+        ts: normalizedTs,
+        channel: channelId ?? null,
+        reason: "dom-not-found",
+      })
+    );
+  }
+
+  private async evaluateDomForMessage(
+    tsList: string[],
+    collectDebug: boolean
+  ): Promise<DomEvaluationOutcome | null> {
+    const needles = tsList.filter((value) => typeof value === "string" && value.length > 0);
+    if (needles.length === 0) return null;
+    const selectors = {
+      root: DOM_ROOT_SELECTORS,
+      body: DOM_BODY_SELECTORS,
+      channel: DOM_CHANNEL_NAME_SELECTORS,
+    };
+    const expression = `${DOM_CAPTURE_SCRIPT}(${JSON.stringify(needles)}, ${JSON.stringify(selectors)}, ${
+      collectDebug ? "true" : "false"
+    })`;
+    let lastFailure: DomEvaluationFailure | null = null;
+    for (const contextId of this.resolveContextIds()) {
+      try {
+        const evalParams: Record<string, unknown> = {
+          expression,
+          returnByValue: true,
+        };
+        if (contextId !== null) evalParams.contextId = contextId;
+        const result = (await this.deps.client.Runtime.evaluate(evalParams)) as {
+          result?: { value?: unknown };
+        };
+        const value = result?.result?.value;
+        if (!value || typeof value !== "object") continue;
+        const record = value as Record<string, unknown>;
+        if ("error" in record && record.error) {
+          continue;
+        }
+        if ("status" in record && typeof record.status === "string") {
+          const reason = record.status as DomEvaluationFailureReason;
+          const failure: DomEvaluationFailure = {
+            ok: false,
+            reason,
+            detail: {
+              needles,
+              candidateCount: Number.isFinite(record.candidateCount as number)
+                ? (record.candidateCount as number)
+                : undefined,
+              sampleTs: Array.isArray(record.sampleTs)
+                ? (record.sampleTs as unknown[]).filter(
+                    (entry): entry is string => typeof entry === "string" && entry.length > 0
+                  )
+                : undefined,
+              samples:
+                collectDebug && Array.isArray(record.samples)
+                  ? (record.samples as DomSample[])
+                  : undefined,
+              hasBody:
+                typeof record.hasBody === "boolean" ? (record.hasBody as boolean) : undefined,
+            },
+          };
+          lastFailure = failure;
+          continue;
+        }
+        const text = this.asString(record.text);
+        if (!text) continue;
+        const channelName = this.asString(record.channel);
+        const matchedTs = Array.isArray(record.matchedTs)
+          ? (record.matchedTs as unknown[]).filter(
+              (entry): entry is string => typeof entry === "string" && entry.length > 0
+            )
+          : undefined;
+        return {
+          ok: true,
+          text,
+          channelName: channelName ?? null,
+          matchedTs,
+        };
+      } catch {
+        /* ignore context evaluation errors */
+      }
+    }
+    return lastFailure;
+  }
+
+  private toExcerpt(text: string): string {
+    if (text.length <= DOM_EXCERPT_LENGTH) return text;
+    return `${text.slice(0, DOM_EXCERPT_LENGTH)}...`;
+  }
+
+  private storeDomCapture(
+    candidate: ReactionDomCandidate,
+    data: { text: string; channelName?: string | null; matchedTs?: string[] },
+    variants: string[]
+  ): void {
+    const entry = {
+      text: data.text,
+      channelName: data.channelName ?? null,
+      capturedAt: Date.now(),
+    };
+    const keys = new Set<string>();
+    keys.add(candidate.normalizedTs);
+    keys.add(candidate.ts);
+    for (const variant of variants) {
+      if (variant) keys.add(variant);
+    }
+    if (Array.isArray(data.matchedTs)) {
+      for (const value of data.matchedTs) {
+        if (typeof value === "string" && value.length > 0) keys.add(value);
+      }
+    }
+    for (const key of keys) {
+      if (key) this.domCaptureByTs.set(key, entry);
+    }
+    this.pruneDomCache();
+  }
+
+  private consumeDomCapture(
+    ts: string | undefined
+  ): { text?: string; channelName?: string | null } | null {
+    if (!ts) return null;
+    const normalized = this.normalizedTimestamp(ts);
+    const keys = new Set<string>();
+    keys.add(ts);
+    if (normalized) keys.add(normalized);
+    let entry: { text: string; channelName?: string | null; capturedAt: number } | null = null;
+    for (const key of keys) {
+      const stored = this.domCaptureByTs.get(key);
+      if (stored) entry = stored;
+    }
+    if (!entry) return null;
+    for (const key of keys) {
+      this.domCaptureByTs.delete(key);
+    }
+    return {
+      text: entry.text,
+      channelName: entry.channelName ?? undefined,
+    };
+  }
+
+  private pruneDomCache(): void {
+    if (this.domCaptureByTs.size <= DOM_CACHE_MAX_ENTRIES) return;
+    const entries = Array.from(this.domCaptureByTs.entries()).sort(
+      (a, b) => a[1].capturedAt - b[1].capturedAt
+    );
+    while (this.domCaptureByTs.size > DOM_CACHE_MAX_ENTRIES && entries.length > 0) {
+      const [key] = entries.shift() ?? [];
+      if (key) {
+        this.domCaptureByTs.delete(key);
+      }
+    }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  private logDomFailure(ts: string, failure: DomEvaluationFailure): void {
+    const payload: Record<string, unknown> = {
+      ts,
+      reason: failure.reason,
+      needles: failure.detail.needles,
+      candidateCount: failure.detail.candidateCount,
+      sampleTs: failure.detail.sampleTs,
+      hasBody: failure.detail.hasBody,
+    };
+    if (failure.detail.samples) {
+      payload.samples = failure.detail.samples;
+    }
+    this.debug("dom capture failure", payload);
   }
 
   private async handleResponseReceived(event: ResponseReceivedEvent): Promise<void> {
@@ -399,411 +1051,13 @@ export class SlackAdapter implements IngestionAdapter {
     return `${seconds}.${String(micros).padStart(6, "0")}`;
   }
 
-  private async fetchMessageFromRuntime(params: {
-    channelId: string;
-    ts: string;
-    frameId?: string;
-    attempt?: number;
-  }): Promise<{ text?: string; user?: string } | null> {
-    const attempt = params.attempt ?? 0;
-    this.debugVerbose("fetchMessageFromRuntime call", params);
-    const expression = `(() => {
-        try {
-          const channelId = ${JSON.stringify(params.channelId)};
-          const targetTs = ${JSON.stringify(params.ts)};
-          const store = window.TS?.client?.channel_store;
-          const channel = store?.getChannel?.(channelId);
-          const fromChannel = Array.isArray(channel?.messages)
-            ? channel.messages.find((m) => m?.ts === targetTs)
-            : null;
-          if (fromChannel) {
-            return {
-              text: fromChannel.text ?? null,
-              user: fromChannel.user ?? null,
-              blocks: fromChannel.blocks ?? null,
-            };
-          }
-          const cache = window.TS?.model?.messages?.[channelId];
-          if (Array.isArray(cache)) {
-            const match = cache.find((m) => m?.ts === targetTs);
-            if (match) {
-              return {
-                text: match.text ?? null,
-                user: match.user ?? null,
-                blocks: match.blocks ?? null,
-              };
-            }
-          }
-        } catch {}
-        return null;
-      })()`;
-
-    for (const contextId of this.resolveContextIds(params.frameId)) {
-      try {
-        const evalParams: Record<string, unknown> = {
-          expression,
-          returnByValue: true,
-        };
-        if (contextId !== null) evalParams.contextId = contextId;
-        const result = (await this.deps.client.Runtime.evaluate(evalParams)) as {
-          result?: { value?: unknown };
-        };
-        const value = result?.result?.value;
-        this.debugVerbose("fetchMessageFromRuntime result", {
-          contextId,
-          value: this.safePreview(value),
-        });
-        if (!value || typeof value !== "object") continue;
-        const text = this.asString((value as Record<string, unknown>).text);
-        const user = this.asString((value as Record<string, unknown>).user);
-        const blocks = (value as Record<string, unknown>).blocks;
-        if (text || blocks || user) {
-          return {
-            text: text ?? fromBlocks(blocks),
-            user: user ?? undefined,
-          };
-        }
-      } catch (err) {
-        this.debugVerbose("fetchMessageFromRuntime context error", {
-          contextId,
-          error: this.safePreview(err),
-        });
-      }
-    }
-
-    if (attempt >= 1) return null;
-
-    const fetched = await this.fetchMessageViaChannelView({
-      channelId: params.channelId,
-      ts: params.ts,
-      frameId: params.frameId,
-    });
-
-    if (fetched && (fetched.text || fetched.user)) {
-      this.cacheMessage(params.channelId, params.ts, fetched);
-    }
-
-    const retry = await this.fetchMessageFromRuntime({
-      channelId: params.channelId,
-      ts: params.ts,
-      frameId: params.frameId,
-      attempt: attempt + 1,
-    });
-
-    return retry ?? fetched ?? null;
-  }
-
-  private async inflateMessage(
-    channelId: string,
-    ts: string,
-    frameId?: string
-  ): Promise<string | undefined> {
-    const fetched = await this.fetchMessageViaChannelView({ channelId, ts, frameId });
-    if (fetched && (fetched.text || fetched.user)) {
-      this.cacheMessage(channelId, ts, fetched);
-    }
-    return fetched?.text;
-  }
-
-  private async fetchMessageViaChannelView(params: {
-    channelId: string;
-    ts: string;
-    frameId?: string;
-  }): Promise<{ text?: string; user?: string } | null> {
-    try {
-      this.debugVerbose("fetchMessageViaChannelView call", params);
-      const expression = `(async () => {
-        try {
-          const channelId = ${JSON.stringify(params.channelId)};
-          const targetTs = ${JSON.stringify(params.ts)};
-          const tsKeys = Object.keys(window.TS ?? {}).slice(0, 20);
-          const tsProps = Object.getOwnPropertyNames(window.TS ?? {}).slice(0, 20);
-          const clientKeys = Object.keys(window.TS?.client ?? {}).slice(0, 20);
-          const clientProps = Object.getOwnPropertyNames(window.TS?.client ?? {}).slice(0, 20);
-          const modelKeys = Object.keys(window.TS?.model ?? {}).slice(0, 20);
-          const windowProps = Object.getOwnPropertyNames(window);
-          const sampledWindowProps = windowProps.slice(0, 60);
-          const candidateNames = windowProps
-            .filter((name) =>
-              /store|Store|channel|messages|Model|Cache|TS/i.test(name)
-            )
-            .slice(0, 30);
-          const channelView = window.TS?.client?.channel_view;
-          const tsType = typeof window.TS;
-          let tsKeySample: string[] | null = null;
-          try {
-            if (window.TS && typeof window.TS === "object") {
-              tsKeySample = Object.keys(window.TS).slice(0, 30);
-            }
-          } catch {}
-          const hasDocument = typeof document !== "undefined";
-          const hasTSObject = typeof window.TS !== "undefined";
-          const sharedContext = {
-            clientKeys,
-            clientProps,
-            tsKeys,
-            tsProps,
-            modelKeys,
-            windowPropsSample: sampledWindowProps,
-            windowPropsCount: windowProps.length,
-            candidateNames,
-            candidateCount: candidateNames.length,
-            tsType,
-            tsKeySample,
-            hasDocument,
-            hasTSObject,
-          };
-          const toPayload = (value, source) => {
-            if (!value || typeof value !== "object") return null;
-            return {
-              text: value.text ?? null,
-              user: value.user ?? null,
-              blocks: value.blocks ?? null,
-              source,
-            };
-          };
-          const isSkippableObject = (value) => {
-            if (!value) return true;
-            if (typeof value !== "object") return true;
-            if (value === window || value === document) return true;
-            if (typeof value.nodeType === "number") return true;
-            return false;
-          };
-          const searchMessageInStores = () => {
-            const maxNodes = 2500;
-            const maxChildren = 60;
-            const visited = new Set();
-            const queue = [];
-            const seenPaths = [];
-            const push = (value, path) => {
-              if (isSkippableObject(value)) return;
-              if (visited.has(value)) return;
-              visited.add(value);
-              queue.push({ value, path });
-              if (seenPaths.length < 10) seenPaths.push(path.join("."));
-            };
-            push(window.TS?.model, ["TS", "model"]);
-            push(window.TS?.client, ["TS", "client"]);
-            push(window.TS?.app, ["TS", "app"]);
-            push(window.TS?.reduxStore, ["TS", "reduxStore"]);
-            push(window.TS?.workspace, ["TS", "workspace"]);
-            for (const name of candidateNames) {
-              try {
-                push(window[name], [name]);
-              } catch {}
-            }
-            let processed = 0;
-            while (queue.length && processed < maxNodes) {
-              const { value, path } = queue.shift();
-              if (!value) continue;
-              processed += 1;
-              if (Array.isArray(value)) {
-                const length = Math.min(value.length, maxChildren);
-                for (let index = 0; index < length; index += 1) {
-                  const item = value[index];
-                  if (!item) continue;
-                  if (typeof item === "object" && item.ts === targetTs) {
-                    const locatedPath = path.concat("[" + index + "]");
-                    return {
-                      payload: toPayload(item, locatedPath.join(".")),
-                      meta: { path: locatedPath },
-                    };
-                  }
-                  push(item, path.concat("[" + index + "]"));
-                }
-                continue;
-              }
-              const tag = Object.prototype.toString.call(value);
-              if (tag === "[object Map]") {
-                let count = 0;
-                for (const [mapKey, mapValue] of value) {
-                  if (count >= maxChildren) break;
-                  count += 1;
-                  if (!mapValue) continue;
-                  const childPath = path.concat("(map:" + String(mapKey) + ")");
-                  if (typeof mapValue === "object" && mapValue.ts === targetTs) {
-                    return {
-                      payload: toPayload(mapValue, childPath.join(".")),
-                      meta: { path: childPath },
-                    };
-                  }
-                  push(mapValue, childPath);
-                }
-                continue;
-              }
-              if (tag === "[object Set]") {
-                let count = 0;
-                for (const setValue of value) {
-                  if (count >= maxChildren) break;
-                  count += 1;
-                  if (!setValue) continue;
-                  const childPath = path.concat("(set)");
-                  if (typeof setValue === "object" && setValue.ts === targetTs) {
-                    return {
-                      payload: toPayload(setValue, childPath.join(".")),
-                      meta: { path: childPath },
-                    };
-                  }
-                  push(setValue, childPath);
-                }
-                continue;
-              }
-              const keys = [];
-              try {
-                keys.push(...Reflect.ownKeys(value));
-              } catch {}
-              const limitedKeys = keys.slice(0, maxChildren);
-              for (const rawKey of limitedKeys) {
-                if (typeof rawKey !== "string" && typeof rawKey !== "number") continue;
-                let child;
-                try {
-                  child = value[rawKey];
-                } catch {
-                  continue;
-                }
-                if (!child) continue;
-                const childPath = path.concat(String(rawKey));
-                if (typeof child === "object" && child.ts === targetTs) {
-                  return {
-                    payload: toPayload(child, childPath.join(".")),
-                    meta: { path: childPath },
-                  };
-                }
-                push(child, childPath);
-              }
-            }
-            return {
-              meta: {
-                processed,
-                visited: visited.size,
-                sampledPaths: seenPaths,
-              },
-            };
-          };
-          if (!channelView || typeof channelView !== "object") {
-            const scanned = searchMessageInStores();
-            if (scanned?.payload) {
-              return scanned.payload;
-            }
-            return { status: "no-channel-view", scanned: scanned?.meta ?? null, ...sharedContext };
-          }
-          const keys = Object.keys(channelView.channel_views ?? {}).slice(0, 15);
-          if (typeof channelView.fetchMessage === "function") {
-            try {
-              const result = await channelView.fetchMessage(channelId, targetTs);
-              const payload = toPayload(result, "channel_view.fetchMessage");
-              if (payload) return payload;
-            } catch (err) {
-              return {
-                status: "error",
-                source: "channel_view.fetchMessage",
-                error: String(err),
-                keys,
-                ...sharedContext,
-              };
-            }
-          }
-          const view = channelView.channel_views?.[channelId];
-          if (view && typeof view.fetchMessage === "function") {
-            try {
-              const result = await view.fetchMessage(targetTs);
-              const payload = toPayload(result, "channel_views[channelId].fetchMessage");
-              if (payload) return payload;
-            } catch (err) {
-              return {
-                status: "error",
-                source: "channel_views[channelId].fetchMessage",
-                error: String(err),
-                keys,
-                ...sharedContext,
-              };
-            }
-          }
-          const scanned = searchMessageInStores();
-          if (scanned?.payload) {
-            return scanned.payload;
-          }
-          return {
-            status: "miss",
-            keys,
-            scanned: scanned?.meta ?? null,
-            ...sharedContext,
-          };
-        } catch (err) {
-          return {
-            status: "error",
-            error: String(err),
-            clientKeys: Object.keys(window.TS?.client ?? {}).slice(0, 20),
-            clientProps: Object.getOwnPropertyNames(window.TS?.client ?? {}).slice(0, 20),
-            tsKeys: Object.keys(window.TS ?? {}).slice(0, 20),
-            tsProps: Object.getOwnPropertyNames(window.TS ?? {}).slice(0, 20),
-            modelKeys: Object.keys(window.TS?.model ?? {}).slice(0, 20),
-            windowProps: Object.getOwnPropertyNames(window).slice(0, 60),
-            candidateNames: Object.getOwnPropertyNames(window)
-              .filter((name) => /store|Store|channel|messages|Model|Cache/i.test(name))
-              .slice(0, 30),
-            windowPropsSample: Object.getOwnPropertyNames(window).slice(0, 60),
-            windowPropsCount: Object.getOwnPropertyNames(window).length,
-            candidateCount: Object.getOwnPropertyNames(window).filter((name) =>
-              /store|Store|channel|messages|Model|Cache/i.test(name)
-            ).length,
-          };
-        }
-      })()`;
-      const contextCandidates = this.resolveContextIds(params.frameId);
-      for (const contextId of contextCandidates) {
-        try {
-          const evalParams: Record<string, unknown> = {
-            expression,
-            returnByValue: true,
-            awaitPromise: true,
-          };
-          if (contextId !== null) evalParams.contextId = contextId;
-          const evalResult = (await this.deps.client.Runtime.evaluate(evalParams)) as {
-            result?: { value?: unknown };
-          };
-          const value = evalResult?.result?.value;
-          this.debugVerbose("fetchMessageViaChannelView result", {
-            contextId,
-            value: this.safePreview(value),
-          });
-          if (!value || typeof value !== "object") continue;
-          if ("status" in value && (value as { status?: string }).status !== undefined) {
-            continue;
-          }
-          const text = this.asString((value as Record<string, unknown>).text);
-          const user = this.asString((value as Record<string, unknown>).user);
-          const blocks = (value as Record<string, unknown>).blocks;
-          if (text || blocks || user) {
-            return {
-              text: text ?? fromBlocks(blocks),
-              user: user ?? undefined,
-            };
-          }
-        } catch (err) {
-          this.debugVerbose("fetchMessageViaChannelView context error", {
-            contextId,
-            error: this.safePreview(err),
-          });
-        }
-      }
-      return null;
-    } catch (err) {
-      this.debugVerbose("fetchMessageViaChannelView exception", err);
-      return null;
-    }
-  }
-
   private handleExecutionContextCreated(event: RuntimeExecutionContextCreatedEvent): void {
     try {
       const context = event?.context;
       if (!context || typeof context.id !== "number") return;
-      this.debugVerbose("executionContextCreated", {
-        id: context.id,
-        name: context.name,
-        origin: context.origin,
-        auxData: context.auxData,
-      });
+      if (this.debugRuntimeEvents) {
+        this.debug("executionContextCreated", this.safePreview(event));
+      }
       const frameId = context.auxData?.frameId ?? null;
       const type = context.auxData?.type;
       const isDefault = Boolean(context.auxData?.isDefault || type === "default");
@@ -831,6 +1085,9 @@ export class SlackAdapter implements IngestionAdapter {
     try {
       const contextId = event?.executionContextId;
       if (typeof contextId !== "number") return;
+      if (this.debugRuntimeEvents) {
+        this.debug("executionContextDestroyed", this.safePreview(event));
+      }
       const frameId = this.frameIdByContext.get(contextId);
       if (frameId) {
         const info = this.contextsByFrame.get(frameId);
@@ -855,7 +1112,7 @@ export class SlackAdapter implements IngestionAdapter {
   }
 
   private resolveContextIds(frameId?: string): Array<number | null> {
-    const result: number[] = [];
+    const result: Array<number | null> = [];
     if (frameId) {
       const info = this.contextsByFrame.get(frameId);
       if (info) {
@@ -875,160 +1132,51 @@ export class SlackAdapter implements IngestionAdapter {
     return result;
   }
 
-  private async resolveApiToken(): Promise<string | null> {
-    if (this.apiToken) return this.apiToken;
-    try {
-      const expression = `(() => {
-        try {
-          if (typeof window !== "object") return null;
-          if (window.__REACLOG_API_TOKEN) return window.__REACLOG_API_TOKEN;
-          const boot = window.TS?.boot_data;
-          if (boot?.api_token) {
-            window.__REACLOG_API_TOKEN = boot.api_token;
-            return window.__REACLOG_API_TOKEN;
-          }
-          if (typeof window.SetApiToken === "function") {
-            const token = window.SetApiToken();
-            if (token) {
-              window.__REACLOG_API_TOKEN = token;
-              return token;
-            }
-          }
-        } catch {}
-        return null;
-      })()`;
-      const result = (await this.deps.client.Runtime.evaluate({
-        expression,
-        returnByValue: true,
-      })) as { result?: { value?: unknown } };
-      const token = this.asString(result?.result?.value as string | undefined);
-      this.debugVerbose("resolveApiToken Runtime result", token ?? "<missing>");
-      if (token) this.apiToken = token;
-      return token ?? null;
-    } catch (err) {
-      this.debugVerbose("resolveApiToken failed", err);
-      return null;
-    }
-  }
-
-  private async fetchMessageDetails(params: {
-    token?: string;
-    channelId: string;
-    ts: string;
-  }): Promise<{ text?: string; user?: string } | null> {
-    const { token, channelId, ts } = params;
-    if (!token) return null;
-    try {
-      const body = new URLSearchParams({
-        channel: channelId,
-        ts,
-        inclusive: "true",
-        limit: "1",
-      });
-      this.debugVerbose("calling conversations.replies", { channelId, ts });
-      const response = await fetch("https://slack.com/api/conversations.replies", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body,
-      });
-      this.debugVerbose("conversations.replies status", response.status);
-      if (!response.ok) return null;
-      const data = (await response.json()) as SlackRepliesResponse;
-      this.debugVerbose("conversations.replies body", this.safePreview(data));
-      if (!data.ok || !Array.isArray(data.messages)) return null;
-      const message = data.messages.find((m) => m.ts === ts) ?? data.messages[0];
-      if (!message) return null;
-      const text = this.asString(message.text) ?? fromBlocks(message.blocks);
-      const user = this.asString(message.user);
-      return { text: text ?? undefined, user: user ?? undefined };
-    } catch {
-      return null;
-    }
-  }
-
-  private rememberToken(params: {
-    payload: Record<string, unknown>;
-    body: string;
-    headers?: Record<string, string>;
-  }): void {
-    if (this.apiToken) return;
-    const direct = this.asString(params.payload.token);
-    if (direct) {
-      this.debugVerbose("token from payload", "***redacted***");
-      this.apiToken = direct;
-      return;
-    }
-
-    const fromBody = this.extractTokenFromBody(params.body);
-    if (fromBody) {
-      this.debugVerbose("token from body", "***redacted***");
-      this.apiToken = fromBody;
-      return;
-    }
-
-    const fromHeaders = this.extractTokenFromHeaders(params.headers);
-    if (fromHeaders) {
-      this.debugVerbose("token from headers", "***redacted***");
-      this.apiToken = fromHeaders;
-    }
-  }
-
-  private extractTokenFromBody(body: string): string | null {
-    if (!body) return null;
-    try {
-      const params = new URLSearchParams(body);
-      const token = params.get("token");
-      return token ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  private extractTokenFromHeaders(headers?: Record<string, string>): string | null {
-    if (!headers) return null;
-    const auth = headers.Authorization ?? headers.authorization;
-    if (auth?.startsWith("Bearer ")) return auth.replace("Bearer ", "");
-    return null;
-  }
-
-  private async ensureApiToken(): Promise<void> {
-    if (this.apiToken) return;
-    try {
-      const expression = `(() => {
-        try {
-          if (typeof window !== "object") return null;
-          const existing = window.__REACLOG_API_TOKEN;
-          if (existing) return existing;
-          const boot = window.TS?.boot_data;
-          if (boot?.api_token) {
-            window.__REACLOG_API_TOKEN = boot.api_token;
-            return boot.api_token;
-          }
-          const weakKey = "SetApiToken?token=";
-          const getter = window[weakKey];
-          if (typeof getter === "function") {
-            const token = getter();
-            if (token) {
-              window.__REACLOG_API_TOKEN = token;
-              return token;
-            }
-          }
-        } catch {
-          // ignore
+  private async runDomProbe(): Promise<void> {
+    const expression = `(() => {
+      try {
+        if (typeof window !== "object") {
+          return { ok: false, reason: "no-window" };
         }
-        return null;
-      })()`;
-      const result = (await this.deps.client.Runtime.evaluate({
-        expression,
-        returnByValue: true,
-      })) as { result?: { value?: unknown } };
-      const token = this.asString(result?.result?.value as string | undefined);
-      if (token) this.apiToken = token;
-    } catch {
-      /* ignore */
+        const ready = typeof document === "object" ? document.readyState : "unknown";
+        const title = typeof document?.title === "string" ? document.title : null;
+        const href = typeof window.location?.href === "string" ? window.location.href : null;
+        const slackPresent = Boolean(window.TS);
+        const timestamp = Date.now();
+        window.__REACLOG_DOM_PROBE__ = { timestamp, ready };
+        return {
+          ok: true,
+          ready,
+          title,
+          href,
+          slackPresent,
+          timestamp,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          reason: String(err),
+        };
+      }
+    })()`;
+    for (const contextId of this.resolveContextIds()) {
+      try {
+        const evalParams: Record<string, unknown> = {
+          expression,
+          returnByValue: true,
+        };
+        if (contextId !== null) evalParams.contextId = contextId;
+        const result = (await this.deps.client.Runtime.evaluate(evalParams)) as {
+          result?: { value?: unknown };
+        };
+        const value = result?.result?.value;
+        this.debug("dom probe result", { contextId, value: this.safePreview(value) });
+        if (value && typeof value === "object" && (value as { ok?: boolean }).ok) {
+          return;
+        }
+      } catch (err) {
+        this.debug("dom probe context error", { contextId, error: this.safePreview(err) });
+      }
     }
   }
 

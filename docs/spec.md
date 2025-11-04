@@ -367,16 +367,20 @@ export interface IngestionAdapter {
 
 ### 3.2 Slack（CDP）
 
-- **取得**：`Fetch.requestPaused`（POST 本文）、`Network.webSocketFrameReceived`（WSの message）、`Network.responseReceived`（JSONレスポンス）
-- **正規化**：
+- **取得チャネル**
+  - `Fetch.requestPaused`（POST body）：`chat.postMessage` / `reactions.add|remove` の payload を正規化。
+  - `Network.webSocketFrameReceived`：リッチテキストやリアルタイム編集をキャッシュ。
+  - `Network.responseReceived`：一部 API 応答を補完キャッシュとして利用。
+  - **DOM スナップショット**：リアクション検知直後に `Runtime.evaluate` で可視 DOM から本文を抜き出す。DOM 取得は既定で有効（`REACLOG_DISABLE_DOM_CAPTURE=1` で無効化可能）。
+- **正規化**
   - `kind='post'|'reaction'`
-  - `subject`：`[#{channel}] yyyy-mm-dd hh:mm` 等
-  - `text`：ブロックからの抽出文字列
-  - `channel`：チャンネル名/ID
-  - `actor`：`message.user` 等
-  - `uid`：`slack:{channel_id}@{ts}`（リアクションは `:emoji:{action}` を meta に）
-
-- **冪等**：`uid` 去重
+  - `subject`：`[#{channel}] メッセージの先頭120字` など軽量な見出し
+  - `detail.slack` へ `channel_id / channel_name / text / blocks / message_ts / emoji` 等を格納
+  - `uid`：`slack:{channel_id}@{message_ts}`（リアクションは `:emoji:{action}` を付与し actor でユニーク化）
+- **冪等**
+  - `uid` で去重
+  - DOM キャプチャの成功時に得た本文をキャッシュし、同メッセージの後続リアクションでも再利用する
+  - DOM キャプチャを無効化した場合は本文が空文字／`undefined` になる前提（フォールバック無し）
 
 ### 3.3 GitHub（最小：Polling / 将来：App+Webhook）
 
@@ -450,6 +454,7 @@ export interface IngestionAdapter {
   3. **ヘルスチェック**：CDP 接続状態を 30 秒間隔で確認し、再接続や UI 上でのバナー表示につなげる。
 - `pnpm start -- --browser-port=4300 --data-dir=./data` のように、CLI オプションで UI ポートやデータディレクトリを上書き。
 - 起動失敗時（CDP へ接続できない等）は UI だけを起動し、ヘルスバナーに「Slack を開いてください」を表示する仕様とする。
+- トラブルシュート用途で `REACLOG_DISABLE_DOM_CAPTURE=1` を指定すると DOM キャプチャを停止できる（この場合、`message_text` は空のまま保存される想定）。
 
 ### 5.2 CLI 拡張（将来）
 
@@ -461,6 +466,37 @@ export interface IngestionAdapter {
 
 - **Windows**：タスク スケジューラ
 - **Linux/macOS**：cron/systemd timer
+
+---
+
+---
+
+## 6.1 デバッグ設定 / 起動例
+
+Slack アダプタは環境変数で挙動を切り替えられる。
+
+| 変数                          | 例                             | 説明                                                                                                                                                        |
+| ----------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `REACLOG_DEBUG`               | `slack:verbose,slack:domprobe` | ドメイン別デバッグログ。`slack:verbose` で Slack アダプタの詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` 等でネットワークイベントを個別に有効化。 |
+| `REACLOG_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に無効化（フォールバックなし、`message_text` は空のまま）。トラブルシュート時のみ使用。                                                       |
+| `REACLOG_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                        |
+
+**起動例**
+
+- 通常運用（最小ログ）
+  ```bash
+  pnpm start
+  ```
+- DOM 取得を調査しながら実行
+  ```bash
+  REACLOG_DEBUG=slack:verbose,slack:domprobe pnpm start | tee -a debug_dom.log
+  ```
+- フォールバック検証（DOM無効化）
+  ```bash
+  REACLOG_DISABLE_DOM_CAPTURE=1 REACLOG_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log
+  ```
+
+Slack 以外のソースを含む統合ログの確認には `/data/YY/MM/DD/<source>/events.jsonl` を直接参照する。
 
 ---
 

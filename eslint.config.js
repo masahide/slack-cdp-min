@@ -11,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default [
   // 無視パターン
-  { ignores: ["node_modules", "dist", "build", "coverage"] },
+  { ignores: ["node_modules", "dist", "build", "coverage", "**/.svelte-kit/**"] },
 
   // JS の推奨
   js.configs.recommended,
@@ -22,8 +22,8 @@ export default [
     languageOptions: {
       parser: tsparser,
       parserOptions: {
-        // ★ Windows でも確実に絶対パスに
-        project: path.join(__dirname, "tsconfig.json"),
+        projectService: true,
+        allowDefaultProject: true,
         tsconfigRootDir: __dirname,
       },
       globals: {
@@ -36,6 +36,20 @@ export default [
       ...tsplugin.configs.recommended.rules,
       "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
       "no-console": "off", // ここはお好みで
+    },
+  },
+  {
+    files: [
+      "apps/browser/vite.config.ts",
+      "apps/browser/vitest.config.ts",
+      "apps/browser/svelte.config.js",
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: false,
+        projectService: false,
+        tsconfigRootDir: __dirname,
+      },
     },
   },
 

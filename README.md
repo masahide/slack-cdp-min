@@ -1,11 +1,11 @@
 # ReacLog
 
-Slack や Git/GitHub のアクティビティを収集し、日次ログとして要約するための開発用ツール群です。Chrome DevTools Protocol (CDP) を介して Slack デスクトップアプリからメッセージやリアクションを取得し、将来的には Git/GitHub ソースも統合することを目指しています。
+Slack や Git/GitHub のアクティビティを収集し、日次ログとして要約するための開発用ツール群です。Chrome DevTools Protocol (CDP) を介して Slack デスクトップアプリからメッセージやリアクションを取得し、JSONL に保存した後、MD サマリを生成するワークフローを提供します。将来的には Git/GitHub ソースも統合することを目指しています。
 
 ## 主な機能
 
-- Slack デスクトップ (app.slack.com) への CDP 接続とイベント抽出
-- メッセージ詳細の正規化・キャッシュ処理 (`src/index.ts`)
+- Slack デスクトップ (app.slack.com) への CDP 接続と DOM キャプチャによる本文取得
+- 正規化済みイベントの JSONL 保存およびキャッシュ処理 (`src/index.ts`)
 - CDP ポートフォワードや Slack 起動を補助するシェルスクリプト群 (`hack/`)
 - アーキテクチャ仕様書 (`docs/spec.md`) に基づくログパイプライン構想
 
@@ -14,6 +14,7 @@ Slack や Git/GitHub のアクティビティを収集し、日次ログとし�
 ```
 ├── src/              # TypeScript エントリポイント
 ├── docs/             # 仕様・設計ドキュメント
+├── apps/browser/     # SvelteKit 製のログビューア
 ├── hack/             # WSL⇔Windows 連携や CDP 用スクリプト
 ├── package.json      # スクリプト定義・依存関係
 └── AGENTS.md         # コントリビューションガイド
@@ -37,30 +38,57 @@ pnpm install
 ## 開発コマンド
 
 ```bash
-pnpm start         # tsx 経由で Slack 収集プロセスを起動
-pnpm run typecheck # TypeScript 型チェック
-pnpm run lint      # ESLint による静的解析
-pnpm run format    # Prettier でフォーマット検証
-pnpm run qa        # typecheck + lint + format を連続実行
+pnpm start                 # tsx 経由で Slack 収集プロセスを起動
+pnpm run typecheck         # TypeScript 型チェック
+pnpm run lint              # ESLint による静的解析
+pnpm run format            # Prettier でフォーマット検証
+pnpm run qa                # typecheck + lint + format を連続実行
+pnpm --filter browser dev  # ログビューア (SvelteKit) の開発サーバー
+pnpm --filter browser test # ビューアの Vitest (サーバーロード + E2E 風テスト)
 ```
+
+## ログビューア (SvelteKit)
+
+`apps/browser/` には JSONL と Markdown を読み込むログビューアが含まれています。`pnpm --filter browser dev` で開発サーバーを起動し、`http://localhost:5173` から以下を確認できます。
+
+- ダッシュボード：最新 7 日分のイベント件数と Slack/GitHub/その他ソース別の内訳、CDP ヘルスステータス
+- 日付別ページ：フィルタ付きタイムライン、Markdown サマリ、原文 JSONL へのリンク
+- Raw ビュー：日付ごとの JSONL をそのまま表示（デバッグ用）
+
+環境変数 `REACLOG_DATA_DIR` で参照するデータディレクトリを指定できます。CDP 収集プロセスと連携する場合は `REACLOG_HEALTH_ENDPOINT`（例: `http://localhost:3487/health`）を指定すると、ダッシュボード右上にステータスが表示されます。
+
+各種テストは `pnpm --filter browser test` で実行されます。テストでは一時ディレクトリに JSONL を構築し、サーバーロード (`+page.server.ts`) や raw ビューまで一連のデータフローを検証しています。
 
 ## Slack/CDP セットアップ
 
-`hack/` ディレクトリのスクリプトを利用すると、WSL から Windows で動く Slack へのポートプロキシやブラウザ起動を整備できます。Slack を起動後、`chrome-remote-interface list` などで `app.slack.com` ターゲットが表示されることを確認してください。必要に応じて `CDP_HOST`/`CDP_PORT` を `.env` ではなくシェル環境からエクスポートし、トークンやクッキー等の資格情報は絶対にリポジトリへコミットしないでください。
+`hack/` ディレクトリのスクリプトを利用すると、WSL から Windows で動く Slack へのポートプロキシやブラウザ起動を整備できます。Slack を起動後、`chrome-remote-interface list` などで `app.slack.com` ターゲットが表示されることを確認してください。必要に応じて `CDP_HOST`/`CDP_PORT` を環境変数として指定します。資格情報（トークンやクッキー等）は絶対にリポジトリへコミットせず、共有時も必ずマスクしてください。
 
-## Slack アダプタのデバッグ
+DOM 取得は既定で有効です。リアクションが本文付きで記録されない場合は、Slack を操作した直後に DOM が可視範囲にあるか確認するか、後述のデバッグフラグで調査してください。
 
-- 既定では最小限のログのみ出力されます。Slack アダプタの内部状態を確認したい場合は `REACLOG_DEBUG` を付与します。
-- `REACLOG_DEBUG=slack` を指定すると、リクエスト解析に失敗した際などに原因がログへ出力されます。
-- さらに詳細な Network/Fetch のイベントを追いたい場合は `REACLOG_DEBUG=slack:verbose` を指定します（大量に出力されるので必要なときのみ使用してください）。
+## Slack ケースのデバッグ\n\nSlack 収集の挙動は環境変数で切り替えられます。\n\n| 変数 | 例 | 説明 |\n| --- | --- | --- |\n| `REACLOG_DEBUG` | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:runtime` で各イベントを個別に有効化。 |\n| `REACLOG_DISABLE_DOM_CAPTURE` | `1` | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。 |\n| `REACLOG_TZ` | `Asia/Tokyo` | タイムゾーン上書き。未指定時は `Asia/Tokyo`。 |\n\n**起動例**\n\n- 通常運用（最小ログ）\n `bash\n  pnpm start\n  `\n- DOM 取得を調査したい場合\n `bash\n  REACLOG_DEBUG=slack:verbose,slack:domprobe pnpm start | tee -a debug_dom.log\n  `\n- DOM を無効化してキャッシュのみ確認\n `bash\n  REACLOG_DISABLE_DOM_CAPTURE=1 REACLOG_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log\n  `\n\n## Slack アダプタのデバッグ
 
-```bash
-# 解析失敗時のログだけ見たい場合
-REACLOG_DEBUG=slack pnpm start | tee -a debug.log
+Slack 収集の挙動は環境変数で切り替えられます。
 
-# Network/Fetch の全イベントや正規化結果まで観測したい場合
-REACLOG_DEBUG=slack:verbose pnpm start
-```
+| 変数                          | 例                             | 説明                                                                                                                                                                       |
+| ----------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `REACLOG_DEBUG`               | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:runtime` で各イベントを個別に有効化。 |
+| `REACLOG_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。                                                                         |
+| `REACLOG_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo`。                                                                                                                              |
+
+**起動例**
+
+- 通常運用（最小ログ）
+  ```bash
+  pnpm start
+  ```
+- DOM 取得を調査したい場合
+  ```bash
+  REACLOG_DEBUG=slack:verbose,slack:domprobe pnpm start | tee -a debug_dom.log
+  ```
+- DOM を無効化してキャッシュのみ確認
+  ```bash
+  REACLOG_DISABLE_DOM_CAPTURE=1 REACLOG_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log
+  ```
 
 ログには API トークン等が含まれることがあります。共有前には必ず `debug.log` などを削除するか、秘匿情報をマスクしてください。
 

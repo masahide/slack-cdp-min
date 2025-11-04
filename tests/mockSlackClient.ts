@@ -1,26 +1,28 @@
 import type {
   FetchPausedEvent,
   ResponseReceivedEvent,
-  WebSocketFrameReceivedEvent,
+  WebSocketFrameEvent,
 } from "../src/slack/adapter.js";
 
 export type Triggerable = {
   fetchHandlers: { requestPaused?: (payload: FetchPausedEvent) => unknown };
   networkHandlers: {
-    webSocketFrameReceived?: (payload: WebSocketFrameReceivedEvent) => unknown;
+    webSocketFrameReceived?: (payload: WebSocketFrameEvent) => unknown;
+    webSocketFrameSent?: (payload: WebSocketFrameEvent) => unknown;
     responseReceived?: (payload: ResponseReceivedEvent) => unknown;
   };
   triggerFetch(payload: FetchPausedEvent): Promise<void>;
   triggerNetwork(
-    name: "webSocketFrameReceived" | "responseReceived",
-    payload: WebSocketFrameReceivedEvent | ResponseReceivedEvent
+    name: "webSocketFrameReceived" | "webSocketFrameSent" | "responseReceived",
+    payload: WebSocketFrameEvent | ResponseReceivedEvent
   ): Promise<void>;
 };
 
 export const createMockSlackClient = () => {
   const fetchHandlers: { requestPaused?: (payload: FetchPausedEvent) => unknown } = {};
   const networkHandlers: {
-    webSocketFrameReceived?: (payload: WebSocketFrameReceivedEvent) => unknown;
+    webSocketFrameReceived?: (payload: WebSocketFrameEvent) => unknown;
+    webSocketFrameSent?: (payload: WebSocketFrameEvent) => unknown;
     responseReceived?: (payload: ResponseReceivedEvent) => unknown;
   } = {};
   const runtimeHandlers: {
@@ -59,13 +61,15 @@ export const createMockSlackClient = () => {
         calls.push(`Network.setCacheDisabled:${JSON.stringify(opts)}`);
       },
       on(
-        name: "webSocketFrameReceived" | "responseReceived",
-        handler: (payload: WebSocketFrameReceivedEvent | ResponseReceivedEvent) => unknown
+        name: "webSocketFrameReceived" | "webSocketFrameSent" | "responseReceived",
+        handler: (payload: WebSocketFrameEvent | ResponseReceivedEvent) => unknown
       ) {
         if (name === "webSocketFrameReceived") {
           networkHandlers.webSocketFrameReceived = handler as (
-            payload: WebSocketFrameReceivedEvent
+            payload: WebSocketFrameEvent
           ) => unknown;
+        } else if (name === "webSocketFrameSent") {
+          networkHandlers.webSocketFrameSent = handler as (payload: WebSocketFrameEvent) => unknown;
         } else {
           networkHandlers.responseReceived = handler as (payload: ResponseReceivedEvent) => unknown;
         }
@@ -77,7 +81,10 @@ export const createMockSlackClient = () => {
       enable: async (opts: unknown) => {
         calls.push(`Runtime.enable:${JSON.stringify(opts)}`);
       },
-      on(name: "executionContextCreated" | "executionContextDestroyed", handler: (payload: unknown) => void) {
+      on(
+        name: "executionContextCreated" | "executionContextDestroyed",
+        handler: (payload: unknown) => void
+      ) {
         runtimeHandlers[name] = handler;
       },
       evaluate: async (params: { expression?: string; contextId?: number }) => {
@@ -120,12 +127,15 @@ export const createMockSlackClient = () => {
       if (handler) await handler(payload);
     },
     async triggerNetwork(
-      name: "webSocketFrameReceived" | "responseReceived",
-      payload: WebSocketFrameReceivedEvent | ResponseReceivedEvent
+      name: "webSocketFrameReceived" | "webSocketFrameSent" | "responseReceived",
+      payload: WebSocketFrameEvent | ResponseReceivedEvent
     ) {
       if (name === "webSocketFrameReceived") {
         const handler = networkHandlers.webSocketFrameReceived;
-        if (handler) await handler(payload as WebSocketFrameReceivedEvent);
+        if (handler) await handler(payload as WebSocketFrameEvent);
+      } else if (name === "webSocketFrameSent") {
+        const handler = networkHandlers.webSocketFrameSent;
+        if (handler) await handler(payload as WebSocketFrameEvent);
       } else {
         const handler = networkHandlers.responseReceived;
         if (handler) await handler(payload as ResponseReceivedEvent);
