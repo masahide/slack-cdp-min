@@ -72,7 +72,32 @@ pnpm run qa                   # 上記すべて（typecheck/lint/format/test/sve
 
 DOM 取得は既定で有効です。リアクションが本文付きで記録されない場合は、Slack を操作した直後に DOM が可視範囲にあるか確認するか、後述のデバッグフラグで調査してください。
 
-## Slack ケースのデバッグ\n\nSlack 収集の挙動は環境変数で切り替えられます。\n\n| 変数 | 例 | 説明 |\n| --- | --- | --- |\n| `REACLOG_DEBUG` | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:runtime` で各イベントを個別に有効化。 |\n| `REACLOG_DISABLE_DOM_CAPTURE` | `1` | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。 |\n| `REACLOG_TZ` | `Asia/Tokyo` | タイムゾーン上書き。未指定時は `Asia/Tokyo`。 |\n\n**起動例**\n\n- 通常運用（最小ログ）\n `bash\n  pnpm start\n  `\n- DOM 取得を調査したい場合\n `bash\n  REACLOG_DEBUG=slack:verbose,slack:domprobe pnpm start | tee -a debug_dom.log\n  `\n- DOM を無効化してキャッシュのみ確認\n `bash\n  REACLOG_DISABLE_DOM_CAPTURE=1 REACLOG_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log\n  `\n\n## Slack アダプタのデバッグ
+## Slack ケースのデバッグ
+
+Slack 収集の挙動は環境変数で切り替えられます。
+
+| 変数                          | 例                             | 説明                                                                                                                                                                       |
+| ----------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `REACLOG_DEBUG`               | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:runtime` で各イベントを個別に有効化。 |
+| `REACLOG_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。                                                                         |
+| `REACLOG_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo`                                                                                                                                |
+
+**起動例**
+
+- 通常運用（最小ログ）
+  ```bash
+  pnpm start
+  ```
+- DOM 取得を調査したい場合
+  ```bash
+  REACLOG_DEBUG=slack:verbose,slack:domprobe pnpm start | tee -a debug_dom.log
+  ```
+- DOM を無効化してキャッシュのみ確認
+  ```bash
+  REACLOG_DISABLE_DOM_CAPTURE=1 REACLOG_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log
+  ```
+
+## Slack アダプタのデバッグ
 
 Slack 収集の挙動は環境変数で切り替えられます。
 
