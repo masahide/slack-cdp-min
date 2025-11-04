@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
 const projectRoot = fileURLToPath(new URL("./", import.meta.url));
-const pool = process.env.CI ? "basic" : "vmThreads";
+const pool = process.env.CI ? "threads" : "vmThreads";
 
 export default defineConfig({
   resolve: {
