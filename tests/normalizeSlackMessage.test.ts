@@ -28,10 +28,12 @@ describe("normalizeSlackMessage", () => {
       channel_id: string;
       channel_name?: string;
       text?: string;
+      message_ts?: string;
     };
     assert.equal(slackDetail.channel_id, "C123");
     assert.equal(slackDetail.channel_name, "dev-infra");
     assert.equal(slackDetail.text, "テストメッセージ");
+    assert.equal(slackDetail.message_ts, "1711111111.000200");
     assert.equal(normalized.ts, "2024-03-22T21:38:31+09:00");
     assert.equal(normalized.logged_at, "2024-03-22T21:40:00+09:00");
   });

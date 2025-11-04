@@ -8,7 +8,7 @@
     "event_ts": "1711134444.000500"
   },
   "expected": {
-    "uid": "slack:C500@1711133333.000400:eyes",
+    "uid": "slack:C500@1711133333.000400:eyes:added:U222",
     "meta": { "emoji": "eyes" }
   }
 }

@@ -6,6 +6,7 @@ export type SlackMessagePayload = {
   channel: { id: string; name?: string };
   user: { id: string; name?: string };
   ts: string;
+  raw_ts?: string;
   text?: string;
   blocks?: unknown;
   thread_ts?: string;
@@ -18,6 +19,7 @@ export type SlackReactionPayload = {
   action: "added" | "removed";
   reaction: string;
   event_ts?: string;
+  message_text?: string | null;
 };
 
 export type NormalizeOptions = {
@@ -29,19 +31,21 @@ export function normalizeSlackMessage(
   payload: SlackMessagePayload,
   options: NormalizeOptions = {}
 ): NormalizedEvent {
-  const { channel, user, ts, text, blocks, thread_ts } = payload;
+  const { channel, user, ts, text, blocks, thread_ts, raw_ts } = payload;
   const timezone = options.timezone ?? DEFAULT_TIMEZONE;
   const channelName = channel.name ?? channel.id;
   const actor = user.name ?? user.id;
   const subjectText = text ?? "";
-  const isoTs = slackTsToIso(ts, timezone);
+  const canonicalTs = ts;
+  const rawTs = raw_ts ?? ts;
+  const isoTs = slackTsToIso(canonicalTs, timezone, options.now);
   const loggedAt = formatInTimezone(options.now ?? new Date(), timezone);
 
   return {
     schema: "reaclog.event.v1.1",
     source: "slack",
     kind: "post",
-    uid: `slack:${channel.id}@${ts}`,
+    uid: `slack:${channel.id}@${rawTs}`,
     actor,
     subject: `[#${channelName}] ${subjectText}`.trim(),
     ts: isoTs,
@@ -56,6 +60,7 @@ export function normalizeSlackMessage(
         text,
         blocks,
         thread_ts,
+        message_ts: rawTs,
       },
     },
   };
@@ -65,21 +70,24 @@ export function normalizeSlackReaction(
   payload: SlackReactionPayload,
   options: NormalizeOptions = {}
 ): NormalizedEvent {
-  const { channel, user, item_ts, action, reaction, event_ts } = payload;
+  const { channel, user, item_ts, action, reaction, event_ts, message_text } = payload;
   const timezone = options.timezone ?? DEFAULT_TIMEZONE;
   const channelName = channel.name ?? channel.id;
-  const actor = user.name ?? user.id;
+  const actorId = user.id ?? "unknown";
+  const actorName = user.name ?? actorId;
+  const actor = actorName;
   const ts = event_ts ?? item_ts;
+  const uniqueSuffix = `${item_ts}:${reaction}:${action}:${actorId}`;
 
   return {
     schema: "reaclog.event.v1.1",
     source: "slack",
     kind: "reaction",
     action,
-    uid: `slack:${channel.id}@${item_ts}:${reaction}`,
+    uid: `slack:${channel.id}@${uniqueSuffix}`,
     actor,
     subject: `[#${channelName}] reaction ${reaction}`,
-    ts: slackTsToIso(ts, timezone),
+    ts: slackTsToIso(ts, timezone, options.now),
     logged_at: formatInTimezone(options.now ?? new Date(), timezone),
     meta: {
       channel: `#${channelName}`,
@@ -92,13 +100,16 @@ export function normalizeSlackReaction(
         message_ts: item_ts,
         emoji: reaction,
         user: actor,
+        message_text: message_text ?? undefined,
       },
     },
   };
 }
 
-const slackTsToIso = (ts: string, timezone: string): string => {
-  const epochMs = Number(ts) * 1000;
+const slackTsToIso = (ts: string, timezone: string, fallback?: Date): string => {
+  const timestamp = Number.parseFloat(ts);
+  const isValid = Number.isFinite(timestamp);
+  const epochMs = isValid ? Math.round(timestamp * 1000) : (fallback?.getTime() ?? Date.now());
   return formatInTimezone(new Date(epochMs), timezone);
 };
 

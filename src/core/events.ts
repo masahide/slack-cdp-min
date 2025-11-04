@@ -14,6 +14,7 @@ export type EventCore = {
 export type SlackPostDetail = {
   channel_id: string;
   channel_name?: string;
+  message_ts?: string;
   text?: string;
   blocks?: unknown;
   thread_ts?: string;
@@ -25,6 +26,7 @@ export type SlackReactionDetail = {
   channel_name?: string;
   emoji?: string;
   user?: string;
+  message_text?: string;
 };
 
 export type SlackDetail = SlackPostDetail | SlackReactionDetail;

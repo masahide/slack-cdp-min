@@ -76,6 +76,7 @@ flowchart TB
 ```
 
 - 追記専用（append-only）。ファイルロックで多重書き込みを抑止。
+- ディレクトリの日付は **イベント記録時刻 (`logged_at`)** に基づく。すべてのレコードで `logged_at` を必須とし、ISO8601 の文字列で格納する。
 - ローテーションは日付ディレクトリ単位。
 
 ### 2.2 JSONL レコード仕様（NormalizedEvent v1.1：共通＋ネスト詳細）
@@ -122,22 +123,27 @@ flowchart TB
 ```json
 {
   "schema": "reaclog.event.v1.1",
-  "uid": "slack:C08QLKYPUUW@1762149560.712159:eyes:add",
+  "uid": "slack:C08QLKYPUUW@1762149560.712159:eyes:added:U123",
   "source": "slack",
   "kind": "reaction",
-  "action": "add",
+  "action": "added",
   "actor": "山崎",
   "ts": "2025-11-03T15:07:55+09:00",
+  "logged_at": "2025-11-03T15:07:56+09:00",
   "detail": {
     "slack": {
       "channel_id": "C08QLKYPUUW",
       "channel_name": "dev-infra",
       "message_ts": "1762149560.712159",
-      "emoji": "eyes"
+      "emoji": "eyes",
+      "user": "U123",
+      "message_text": "例: こんにちは"
     }
   }
 }
 ```
+
+- UID は `channel@message_ts:emoji:action:user_id` 形式とし、同じ投稿に対して別ユーザーが add/remove を繰り返しても重複除外されないようにする。
 
 #### 例：GitHub PR
 

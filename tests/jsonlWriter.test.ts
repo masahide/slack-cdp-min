@@ -29,20 +29,47 @@ describe("JsonlWriter", () => {
     const event1 = createEvent();
     const event2 = createEvent({
       uid: "slack:C123@1711112222.000300",
-      ts: "2024-03-22T22:00:00+09:00",
+      ts: "2023-12-01T10:00:00+09:00",
+      logged_at: "2024-03-23T08:00:00+09:00",
       subject: "テスト2",
     });
 
     await writer.append(event1);
     await writer.append(event2);
 
-    const targetPath = join(tmp, "2024", "03", "22", "slack", "events.jsonl");
+    const pathEvent1 = join(tmp, "2024", "03", "22", "slack", "events.jsonl");
+    const pathEvent2 = join(tmp, "2024", "03", "23", "slack", "events.jsonl");
+
+    const content1 = await readFile(pathEvent1, "utf8");
+    const lines1 = content1.trim().split("\n");
+    assert.equal(lines1.length, 1);
+    assert.equal(JSON.parse(lines1[0]).uid, event1.uid);
+
+    const content2 = await readFile(pathEvent2, "utf8");
+    const lines2 = content2.trim().split("\n");
+    assert.equal(lines2.length, 1);
+    const parsed2 = JSON.parse(lines2[0]);
+    assert.equal(parsed2.uid, event2.uid);
+
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("logged_at が無い場合は現在時刻で補完する", async () => {
+    const tmp = await mkdtemp(`${tmpdir()}/reaclog-jsonl-`);
+    const writer = new JsonlWriter({ dataDir: tmp });
+
+    const event = createEvent({ logged_at: undefined });
+
+    await writer.append(event);
+
+    assert.ok(event.logged_at && event.logged_at.length > 0, "logged_at should be set");
+
+    const datePart = event.logged_at!.split("T")[0] ?? "1970-01-01";
+    const [year, month, day] = datePart.split("-");
+    const targetPath = join(tmp, year!, month!, day!, "slack", "events.jsonl");
     const content = await readFile(targetPath, "utf8");
     const lines = content.trim().split("\n");
-    assert.equal(lines.length, 2);
-    assert.equal(JSON.parse(lines[0]).uid, event1.uid);
-    assert.equal(JSON.parse(lines[1]).uid, event2.uid);
-
+    assert.equal(lines.length, 1);
     await rm(tmp, { recursive: true, force: true });
   });
 });

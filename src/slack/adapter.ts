@@ -137,9 +137,8 @@ export class SlackAdapter implements IngestionAdapter {
       const channelId = typeof payload.channel === "string" ? payload.channel : "";
       const userId = typeof payload.user === "string" ? payload.user : undefined;
       const blocks = payload.blocks as Parameters<typeof fromBlocks>[0];
-      const slackTs = this.resolveMessageTs(
-        (payload.ts as string | undefined) ?? (payload.thread_ts as string | undefined)
-      );
+      const rawTs = this.asString(payload.ts);
+      const slackTs = this.resolveMessageTs(rawTs ?? this.asString(payload.thread_ts));
       const event = normalizeSlackMessage(
         {
           channel: { id: channelId, name: channelId },
@@ -148,6 +147,7 @@ export class SlackAdapter implements IngestionAdapter {
           text: payload.text as string | undefined,
           blocks,
           thread_ts: payload.thread_ts as string | undefined,
+          raw_ts: rawTs,
         },
         normalizeOpts
       );
@@ -156,6 +156,12 @@ export class SlackAdapter implements IngestionAdapter {
           text: (payload.text as string | undefined) ?? fromBlocks(blocks),
           user: userId,
         });
+        if (rawTs && rawTs !== slackTs) {
+          this.cacheMessage(channelId, rawTs, {
+            text: (payload.text as string | undefined) ?? fromBlocks(blocks),
+            user: userId,
+          });
+        }
       }
       return [event];
     }
@@ -163,8 +169,15 @@ export class SlackAdapter implements IngestionAdapter {
     if (url.pathname.startsWith("/api/reactions.")) {
       const item = payload.item as Record<string, unknown> | undefined;
       const channelId = this.asString(payload.channel) ?? this.asString(item?.channel) ?? "";
-      const itemTs = this.asString(payload.timestamp) ?? this.asString(item?.ts) ?? "";
-      const cached = this.cache.get(this.cacheKey(channelId, itemTs));
+      const rawItemTs = this.asString(payload.timestamp) ?? this.asString(item?.ts);
+      const normalizedItemTs = this.normalizedTimestamp(rawItemTs);
+      const fallbackItemTs = this.resolveMessageTs(undefined);
+      const lookupKeys = [rawItemTs, normalizedItemTs, fallbackItemTs]
+        .filter((value): value is string => Boolean(value))
+        .map((value) => this.cacheKey(channelId, value));
+      const cached = lookupKeys
+        .map((key) => this.cache.get(key))
+        .find((entry): entry is { text?: string; user?: string } => Boolean(entry));
       const action = url.pathname.endsWith(".add")
         ? "added"
         : url.pathname.endsWith(".remove")
@@ -173,16 +186,18 @@ export class SlackAdapter implements IngestionAdapter {
       const userId = this.asString(payload.user) ?? cached?.user ?? "unknown";
       const reactionName = this.asString(payload.name) ?? this.asString(payload.reaction);
       const eventTs = this.asString(payload.event_ts);
-      if (!channelId || !itemTs || !reactionName) {
+      const itemTsForEvent = rawItemTs ?? normalizedItemTs ?? fallbackItemTs;
+      if (!channelId || !itemTsForEvent || !reactionName) {
         this.debug("reaction payload missing fields", {
           channelId,
-          itemTs,
+          itemTs: itemTsForEvent,
           reactionName,
           payload: this.redactPayload(payload),
         });
         return [];
       }
 
+      const messageText = cached?.text ?? this.asString(payload.message_text);
       const reactionEvent = normalizeSlackReaction(
         {
           channel: { id: channelId, name: channelId },
@@ -190,10 +205,11 @@ export class SlackAdapter implements IngestionAdapter {
             id: userId,
             name: cached?.user ?? userId,
           },
-          item_ts: itemTs,
+          item_ts: itemTsForEvent,
           action,
           reaction: reactionName,
           event_ts: eventTs,
+          message_text: messageText,
         },
         normalizeOpts
       );
@@ -274,7 +290,8 @@ export class SlackAdapter implements IngestionAdapter {
   }
 
   private resolveMessageTs(ts: string | undefined): string {
-    if (ts && ts !== "") return ts;
+    const normalized = this.normalizedTimestamp(ts);
+    if (normalized) return normalized;
     const now = this.now();
     const epochSeconds = Math.floor(now.getTime() / 1000);
     const millis = now.getMilliseconds();
@@ -291,6 +308,15 @@ export class SlackAdapter implements IngestionAdapter {
 
   private asString(value: unknown): string | undefined {
     return typeof value === "string" && value !== "" ? value : undefined;
+  }
+
+  private normalizedTimestamp(ts: string | undefined): string | null {
+    if (!ts) return null;
+    const parsed = Number.parseFloat(ts);
+    if (!Number.isFinite(parsed)) return null;
+    const seconds = Math.floor(parsed);
+    const micros = Math.round((parsed - seconds) * 1_000_000);
+    return `${seconds}.${String(micros).padStart(6, "0")}`;
   }
 
   private redactPayload(payload: Record<string, unknown>): Record<string, unknown> {

@@ -50,9 +50,15 @@ describe("SlackAdapter event handling", () => {
     assert.equal(reaction.meta?.emoji, "thumbsup");
     const detail = reaction.detail;
     assert.ok(detail && "slack" in detail);
-    const slackDetail = detail.slack as { channel_id: string; emoji?: string };
+    const slackDetail = detail.slack as {
+      channel_id: string;
+      emoji?: string;
+      message_text?: string;
+    };
     assert.equal(slackDetail.channel_id, "C999");
     assert.equal(slackDetail.emoji, "thumbsup");
+    assert.equal(slackDetail.message_text, "");
     assert.equal(reaction.actor, "U222", "WebSocketキャッシュからactorを補完する");
+    assert.equal(reaction.uid, "slack:C999@1711115555.000600:thumbsup:added:U222");
   });
 });
