@@ -23,10 +23,21 @@ export const createMockSlackClient = () => {
     webSocketFrameReceived?: (payload: WebSocketFrameReceivedEvent) => unknown;
     responseReceived?: (payload: ResponseReceivedEvent) => unknown;
   } = {};
+  const runtimeHandlers: {
+    executionContextCreated?: (payload: unknown) => void;
+    executionContextDestroyed?: (payload: unknown) => void;
+  } = {};
   const calls: string[] = [];
   const continued: string[] = [];
 
   const responseBodies: Record<string, { body: string; base64Encoded: boolean }> = {};
+
+  let runtimeToken: string | null = null;
+  let runtimeEvaluate:
+    | ((params: { expression?: string; contextId?: number }) => Promise<{
+        result: { value: unknown };
+      }>)
+    | null = null;
 
   const client = {
     Fetch: {
@@ -63,7 +74,18 @@ export const createMockSlackClient = () => {
         responseBodies[requestId] ?? { body: "", base64Encoded: false },
     },
     Runtime: {
-      evaluate: async () => ({ result: { value: null } }),
+      enable: async (opts: unknown) => {
+        calls.push(`Runtime.enable:${JSON.stringify(opts)}`);
+      },
+      on(name: "executionContextCreated" | "executionContextDestroyed", handler: (payload: unknown) => void) {
+        runtimeHandlers[name] = handler;
+      },
+      evaluate: async (params: { expression?: string; contextId?: number }) => {
+        if (runtimeEvaluate) {
+          return runtimeEvaluate(params);
+        }
+        return { result: { value: runtimeToken } };
+      },
     },
   };
 
@@ -73,7 +95,26 @@ export const createMockSlackClient = () => {
     continued,
     fetchHandlers,
     networkHandlers,
+    runtimeHandlers,
     responseBodies,
+    setRuntimeToken(token: string | null) {
+      runtimeToken = token;
+    },
+    setRuntimeEvaluate(
+      fn: (params: { expression?: string; contextId?: number }) => Promise<{
+        result: { value: unknown };
+      }>
+    ) {
+      runtimeEvaluate = fn;
+    },
+    triggerExecutionContextCreated(payload: unknown) {
+      const handler = runtimeHandlers.executionContextCreated;
+      if (handler) handler(payload);
+    },
+    triggerExecutionContextDestroyed(payload: unknown) {
+      const handler = runtimeHandlers.executionContextDestroyed;
+      if (handler) handler(payload);
+    },
     async triggerFetch(payload: FetchPausedEvent) {
       const handler = fetchHandlers.requestPaused;
       if (handler) await handler(payload);
