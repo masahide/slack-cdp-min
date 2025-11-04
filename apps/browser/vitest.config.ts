@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
 const projectRoot = fileURLToPath(new URL("./", import.meta.url));
+const pool = process.env.CI ? "basic" : "vmThreads";
 
 export default defineConfig({
   resolve: {
@@ -17,7 +18,7 @@ export default defineConfig({
       "src/routes/**/*.{test,spec}.{js,ts}",
       "tests/**/*.{test,spec}.{js,ts}",
     ],
-    pool: "vmThreads",
+    pool,
     coverage: {
       reporter: ["text", "lcov"],
       enabled: false,
