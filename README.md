@@ -48,6 +48,22 @@ pnpm run qa        # typecheck + lint + format を連続実行
 
 `hack/` ディレクトリのスクリプトを利用すると、WSL から Windows で動く Slack へのポートプロキシやブラウザ起動を整備できます。Slack を起動後、`chrome-remote-interface list` などで `app.slack.com` ターゲットが表示されることを確認してください。必要に応じて `CDP_HOST`/`CDP_PORT` を `.env` ではなくシェル環境からエクスポートし、トークンやクッキー等の資格情報は絶対にリポジトリへコミットしないでください。
 
+## Slack アダプタのデバッグ
+
+- 既定では最小限のログのみ出力されます。Slack アダプタの内部状態を確認したい場合は `REACLOG_DEBUG` を付与します。
+- `REACLOG_DEBUG=slack` を指定すると、リクエスト解析に失敗した際などに原因がログへ出力されます。
+- さらに詳細な Network/Fetch のイベントを追いたい場合は `REACLOG_DEBUG=slack:verbose` を指定します（大量に出力されるので必要なときのみ使用してください）。
+
+```bash
+# 解析失敗時のログだけ見たい場合
+REACLOG_DEBUG=slack pnpm start | tee -a debug.log
+
+# Network/Fetch の全イベントや正規化結果まで観測したい場合
+REACLOG_DEBUG=slack:verbose pnpm start
+```
+
+ログには API トークン等が含まれることがあります。共有前には必ず `debug.log` などを削除するか、秘匿情報をマスクしてください。
+
 ## 仕様と今後の開発
 
 データモデルや日次要約の詳細は `docs/spec.md` を参照してください。GitHub やローカル Git のアダプタ追加、JSONL 保存、LLM 要約機能はロードマップに含まれています。新しいモジュールやテストを追加する際は `AGENTS.md` に記載のコーディング規約と PR ガイドラインを遵守してください。

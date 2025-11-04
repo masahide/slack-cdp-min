@@ -54,6 +54,13 @@ type SlackAdapterDeps = {
 
 const SLACK_API_RE = /https:\/\/[^/]+\.slack\.com\/api\/(chat\.postMessage|reactions\.[a-z]+)/i;
 
+const DEBUG_TOKENS = (process.env.REACLOG_DEBUG ?? "")
+  .split(",")
+  .map((token) => token.trim())
+  .filter((token) => token.length > 0);
+
+const DEBUG_TARGETS = new Set(DEBUG_TOKENS);
+
 export class SlackAdapter implements IngestionAdapter {
   name = "slack";
   private readonly now: () => Date;
@@ -61,6 +68,8 @@ export class SlackAdapter implements IngestionAdapter {
   private emit: EmitFn | null = null;
   private readonly cache: Map<string, { text?: string; user?: string }> = new Map();
   private readonly seenUids: Set<string> = new Set();
+  private readonly debugEnabled = DEBUG_TARGETS.has("slack") || DEBUG_TARGETS.has("slack:verbose");
+  private readonly debugVerboseEnabled = DEBUG_TARGETS.has("slack:verbose");
 
   constructor(private readonly deps: SlackAdapterDeps) {
     this.now = deps.now ?? (() => new Date());
@@ -73,10 +82,13 @@ export class SlackAdapter implements IngestionAdapter {
 
     await Network.enable({});
     await Network.setCacheDisabled({ cacheDisabled: true });
+    this.debugVerbose("Network domain enabled");
     Network.on("webSocketFrameReceived", (payload) => {
+      this.debugVerbose("webSocketFrameReceived", this.safePreview(payload));
       this.handleWebSocketFrame(payload as WebSocketFrameReceivedEvent);
     });
     Network.on("responseReceived", (payload) => {
+      this.debugVerbose("responseReceived", this.safePreview(payload));
       void this.handleResponseReceived(payload as ResponseReceivedEvent);
     });
 
@@ -86,8 +98,10 @@ export class SlackAdapter implements IngestionAdapter {
         { urlPattern: "*://*.slack.com/api/reactions.*", requestStage: "Request" },
       ],
     });
+    this.debugVerbose("Fetch domain enabled with patterns");
 
     Fetch.on("requestPaused", async (event: FetchPausedEvent) => {
+      this.debugVerbose("requestPaused", this.safePreview(event));
       try {
         const normalizedEvents = await this.handleRequest(event);
         for (const normalized of normalizedEvents) {
@@ -111,56 +125,79 @@ export class SlackAdapter implements IngestionAdapter {
     const contentType = this.normalizeHeader(event.request.headers, "content-type");
     const normalizeOpts: NormalizeOptions = { now: this.now(), timezone: this.timezone };
     const url = new URL(event.request.url);
+    const payload = this.parseBody(body, contentType);
+    if (!payload) {
+      this.debug("parseBody returned null", { url: event.request.url, contentType });
+      return [];
+    }
 
-    if (/application\/json|text\/json/i.test(contentType) || body.startsWith("{")) {
-      try {
-        const parsed = JSON.parse(body);
-        if (url.pathname.endsWith("/api/chat.postMessage")) {
-          const slackTs = this.resolveMessageTs(parsed.ts ?? parsed.thread_ts);
-          const event = normalizeSlackMessage(
-            {
-              channel: { id: parsed.channel, name: parsed.channel },
-              user: { id: parsed.user ?? "unknown", name: parsed.user ?? undefined },
-              ts: slackTs,
-              text: parsed.text,
-              blocks: parsed.blocks,
-              thread_ts: parsed.thread_ts,
-            },
-            normalizeOpts
-          );
-          this.cacheMessage(parsed.channel, slackTs, {
-            text: parsed.text ?? fromBlocks(parsed.blocks),
-            user: parsed.user,
-          });
-          return [event];
-        }
-        if (url.pathname.startsWith("/api/reactions.")) {
-          const itemTs = parsed.timestamp ?? parsed.item?.ts ?? "";
-          const cached = this.cache.get(this.cacheKey(parsed.channel, itemTs));
-          const action = url.pathname.endsWith(".add")
-            ? "added"
-            : url.pathname.endsWith(".remove")
-              ? "removed"
-              : "added";
-          const reactionEvent = normalizeSlackReaction(
-            {
-              channel: { id: parsed.channel, name: parsed.channel },
-              user: {
-                id: parsed.user ?? cached?.user ?? "unknown",
-                name: parsed.user ?? cached?.user,
-              },
-              item_ts: itemTs,
-              action,
-              reaction: parsed.name ?? parsed.reaction,
-              event_ts: parsed.event_ts,
-            },
-            normalizeOpts
-          );
-          return [reactionEvent];
-        }
-      } catch {
+    this.debugVerbose("parsed payload", this.redactPayload(payload));
+
+    if (url.pathname.endsWith("/api/chat.postMessage")) {
+      const channelId = typeof payload.channel === "string" ? payload.channel : "";
+      const userId = typeof payload.user === "string" ? payload.user : undefined;
+      const blocks = payload.blocks as Parameters<typeof fromBlocks>[0];
+      const slackTs = this.resolveMessageTs(
+        (payload.ts as string | undefined) ?? (payload.thread_ts as string | undefined)
+      );
+      const event = normalizeSlackMessage(
+        {
+          channel: { id: channelId, name: channelId },
+          user: { id: userId ?? "unknown", name: userId },
+          ts: slackTs,
+          text: payload.text as string | undefined,
+          blocks,
+          thread_ts: payload.thread_ts as string | undefined,
+        },
+        normalizeOpts
+      );
+      if (channelId) {
+        this.cacheMessage(channelId, slackTs, {
+          text: (payload.text as string | undefined) ?? fromBlocks(blocks),
+          user: userId,
+        });
+      }
+      return [event];
+    }
+
+    if (url.pathname.startsWith("/api/reactions.")) {
+      const item = payload.item as Record<string, unknown> | undefined;
+      const channelId = this.asString(payload.channel) ?? this.asString(item?.channel) ?? "";
+      const itemTs = this.asString(payload.timestamp) ?? this.asString(item?.ts) ?? "";
+      const cached = this.cache.get(this.cacheKey(channelId, itemTs));
+      const action = url.pathname.endsWith(".add")
+        ? "added"
+        : url.pathname.endsWith(".remove")
+          ? "removed"
+          : "added";
+      const userId = this.asString(payload.user) ?? cached?.user ?? "unknown";
+      const reactionName = this.asString(payload.name) ?? this.asString(payload.reaction);
+      const eventTs = this.asString(payload.event_ts);
+      if (!channelId || !itemTs || !reactionName) {
+        this.debug("reaction payload missing fields", {
+          channelId,
+          itemTs,
+          reactionName,
+          payload: this.redactPayload(payload),
+        });
         return [];
       }
+
+      const reactionEvent = normalizeSlackReaction(
+        {
+          channel: { id: channelId, name: channelId },
+          user: {
+            id: userId,
+            name: cached?.user ?? userId,
+          },
+          item_ts: itemTs,
+          action,
+          reaction: reactionName,
+          event_ts: eventTs,
+        },
+        normalizeOpts
+      );
+      return [reactionEvent];
     }
 
     return [];
@@ -170,8 +207,15 @@ export class SlackAdapter implements IngestionAdapter {
     if (!headers) return "";
     const direct = headers[key];
     if (direct) return direct;
-    const alt = headers[key.toLowerCase()] ?? headers[key.toUpperCase()];
-    return alt ?? "";
+    const lower = headers[key.toLowerCase()];
+    if (lower) return lower;
+    const upper = headers[key.toUpperCase()];
+    if (upper) return upper;
+    const target = key.toLowerCase();
+    for (const [k, value] of Object.entries(headers)) {
+      if (k.toLowerCase() === target) return value;
+    }
+    return "";
   }
 
   private handleWebSocketFrame(event: WebSocketFrameReceivedEvent): void {
@@ -241,6 +285,125 @@ export class SlackAdapter implements IngestionAdapter {
     if (!event || !event.uid) return;
     if (this.seenUids.has(event.uid)) return;
     this.seenUids.add(event.uid);
+    this.debugVerbose("deliver", event);
     await emit(event);
+  }
+
+  private asString(value: unknown): string | undefined {
+    return typeof value === "string" && value !== "" ? value : undefined;
+  }
+
+  private redactPayload(payload: Record<string, unknown>): Record<string, unknown> {
+    const cloned: Record<string, unknown> = { ...payload };
+    for (const key of Object.keys(cloned)) {
+      if (typeof cloned[key] === "string" && /(token|cookie)/i.test(key)) {
+        cloned[key] = "[redacted]";
+      }
+    }
+    return cloned;
+  }
+
+  private parseBody(body: string, contentType: string): Record<string, unknown> | null {
+    if (!body) return {};
+    if (/application\/json|text\/json/i.test(contentType) || body.trim().startsWith("{")) {
+      try {
+        return JSON.parse(body);
+      } catch {
+        this.debug("failed to parse JSON body");
+        return null;
+      }
+    }
+
+    if (/application\/x-www-form-urlencoded/i.test(contentType)) {
+      try {
+        const params = new URLSearchParams(body);
+        const result: Record<string, unknown> = {};
+        for (const [key, value] of params.entries()) {
+          result[key] = value;
+          if (key === "payload") {
+            try {
+              const parsed = JSON.parse(value);
+              Object.assign(result, parsed);
+            } catch {
+              this.debug("failed to parse nested payload JSON");
+            }
+          }
+        }
+        return result;
+      } catch {
+        this.debug("failed to parse form body");
+        return null;
+      }
+    }
+
+    if (/multipart\/form-data/i.test(contentType)) {
+      const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
+      if (!boundaryMatch) {
+        this.debug("missing multipart boundary");
+        return null;
+      }
+
+      const boundary = `--${boundaryMatch[1].replace(/^["']|["']$/g, "")}`;
+      const segments = body.split(boundary);
+      const result: Record<string, unknown> = {};
+
+      for (const segment of segments) {
+        const trimmed = segment.trim();
+        if (!trimmed || trimmed === "--") continue;
+
+        const [headerSection, ...valueSections] = trimmed.split("\r\n\r\n");
+        if (!headerSection || valueSections.length === 0) continue;
+
+        const headers = headerSection.split("\r\n");
+        const disposition = headers.find((line) => /content-disposition/i.test(line)) ?? "";
+        const nameMatch = disposition.match(/name="([^"]+)"/i);
+        if (!nameMatch) continue;
+
+        let value = valueSections.join("\r\n\r\n");
+        value = value.replace(/\r\n--$/, "");
+        const normalizedValue = value.trim();
+
+        result[nameMatch[1]] = normalizedValue;
+        if (nameMatch[1] === "payload") {
+          try {
+            const parsed = JSON.parse(normalizedValue);
+            Object.assign(result, parsed);
+          } catch {
+            this.debug("failed to parse multipart payload JSON");
+          }
+        }
+      }
+
+      return result;
+    }
+
+    return null;
+  }
+
+  private debug(message: string, payload?: unknown): void {
+    if (!this.debugEnabled) return;
+    if (payload === undefined) {
+      console.log(`[SlackAdapter] ${message}`);
+      return;
+    }
+    console.log(`[SlackAdapter] ${message}:`, payload);
+  }
+
+  private debugVerbose(message: string, payload?: unknown): void {
+    if (!this.debugVerboseEnabled) return;
+    this.debug(message, payload);
+  }
+
+  private safePreview(payload: unknown): unknown {
+    if (!payload) return payload;
+    try {
+      return JSON.parse(
+        JSON.stringify(payload, (_, value) =>
+          typeof value === "bigint" ? value.toString() : value
+        )
+      );
+    } catch {
+      return payload;
+    }
   }
 }

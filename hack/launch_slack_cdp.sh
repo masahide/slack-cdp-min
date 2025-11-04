@@ -4,10 +4,27 @@ set -euo pipefail
 # Usage:
 #   ./hack/launch_slack_cdp.sh         # port=9222 で起動
 #   ./hack/launch_slack_cdp.sh 9333    # port=9333 で起動
-#   ./hack/launch_slack_cdp.sh --show  # 検出した Windows パスだけ表示
+#   ./hack/launch_slack_cdp.sh --show  # 検出した Slack パスだけ表示
 
 PORT="${1:-9222}"
-if [[ "$PORT" == "--show" ]]; then SHOW_ONLY=1; else SHOW_ONLY=0; fi
+if [[ "$PORT" == "--show" ]]; then
+  SHOW_ONLY=1
+  PORT="9222"
+else
+  SHOW_ONLY=0
+fi
+
+OS_NAME="$(uname -s)"
+
+if [[ "$OS_NAME" == "Darwin" ]]; then
+  echo "[INFO] Launching via open (port=$PORT)"
+  open -a "Slack" --args "--remote-debugging-port=$PORT"
+  echo "[OK] Launched. (Check for 'DevTools listening on ws://127.0.0.1:$PORT/...')"
+  sleep 1
+  echo "curl http://localhost:9222/json/version" 
+  curl http://localhost:9222/json/version
+  exit 0
+fi
 
 pwsh() { powershell.exe -NoProfile -Command "$1" | tr -d '\r'; }
 
@@ -62,5 +79,6 @@ echo "Windows path: $found_win"
 echo "[INFO] Launching via PowerShell Start-Process (port=$PORT)"
 powershell.exe -NoProfile -Command \
   "Start-Process -FilePath '$found_win' -ArgumentList @('--remote-debugging-port=$PORT')"
+
 
 echo "[OK] Launched. (Check for 'DevTools listening on ws://127.0.0.1:$PORT/...')"
