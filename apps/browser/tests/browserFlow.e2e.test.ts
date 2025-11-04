@@ -3,6 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import type { DashboardLoadData } from "$lib/viewModels/dashboard";
+import type { DayPageData } from "$lib/viewModels/day";
+import type { RawPageData } from "$lib/viewModels/raw";
 import { resetConfigCache } from "../src/lib/server/config";
 import { load as dashboardLoad } from "../src/routes/+page.server";
 import { load as dayLoad } from "../src/routes/day/[date]/+page.server";
@@ -45,38 +48,38 @@ describe("End-to-end data flow", () => {
       })
     );
 
-    const dashboard = await dashboardLoad({
+    const dashboard = (await dashboardLoad({
       depends: vi.fn(),
       locals: {},
       params: {},
       url: new URL("http://example.test/"),
       fetch: fetchMock,
       setHeaders: vi.fn(),
-    } as never);
+    } as never)) as DashboardLoadData;
 
     expect(dashboard.days[0]).toMatchObject({ date: "2025-11-03", total: 2 });
     expect(dashboard.health?.status).toBe("ok");
 
-    const day = await dayLoad({
+    const day = (await dayLoad({
       depends: vi.fn(),
       locals: {},
       params: { date: "2025-11-03" },
       url: new URL("http://example.test/day/2025-11-03"),
       fetch: vi.fn(),
       setHeaders: vi.fn(),
-    } as never);
+    } as never)) as DayPageData;
 
     expect(day.events).toHaveLength(2);
     expect(day.summary).toContain("## Done");
 
-    const raw = await rawLoad({
+    const raw = (await rawLoad({
       depends: vi.fn(),
       locals: {},
       params: { date: "2025-11-03" },
       url: new URL("http://example.test/day/2025-11-03/raw"),
       fetch: vi.fn(),
       setHeaders: vi.fn(),
-    } as never);
+    } as never)) as RawPageData;
 
     const slackRaw = raw.files.find((file) => file.source === "slack");
     expect(slackRaw?.lines).toContainEqual(

@@ -10,7 +10,7 @@
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "test": "node --import tsx --test ./tests/**/*.test.ts",
-    "qa": "pnpm run typecheck && pnpm run lint && pnpm run format"
+    "qa": "pnpm run typecheck && pnpm run lint && pnpm run format && pnpm run test && pnpm --filter browser exec svelte-kit sync && pnpm --filter browser exec tsc --noEmit && pnpm --filter browser test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",

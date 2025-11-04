@@ -38,13 +38,15 @@ pnpm install
 ## 開発コマンド
 
 ```bash
-pnpm start                 # tsx 経由で Slack 収集プロセスを起動
-pnpm run typecheck         # TypeScript 型チェック
-pnpm run lint              # ESLint による静的解析
-pnpm run format            # Prettier でフォーマット検証
-pnpm run qa                # typecheck + lint + format を連続実行
-pnpm --filter browser dev  # ログビューア (SvelteKit) の開発サーバー
-pnpm --filter browser test # ビューアの Vitest (サーバーロード + E2E 風テスト)
+pnpm start                    # tsx 経由で Slack 収集プロセスを起動
+pnpm run typecheck            # TypeScript 型チェック（ワークスペース全体）
+pnpm run lint                 # ESLint による静的解析
+pnpm run format               # Prettier でフォーマット検証
+pnpm run test                 # Node 側の test runner (node --test)
+pnpm --filter browser dev     # ログビューア (SvelteKit) の開発サーバー
+pnpm --filter browser test    # ビューアの Vitest (サーバーロード + E2E 風テスト)
+pnpm --filter browser exec tsc --noEmit  # ビューア側 TypeScript 型チェック
+pnpm run qa                   # 上記すべて（typecheck/lint/format/test/svelte-kit sync/ブラウザ型検証/Vitest）
 ```
 
 ## ログビューア (SvelteKit)
@@ -57,7 +59,12 @@ pnpm --filter browser test # ビューアの Vitest (サーバーロード + E2E
 
 環境変数 `REACLOG_DATA_DIR` で参照するデータディレクトリを指定できます。CDP 収集プロセスと連携する場合は `REACLOG_HEALTH_ENDPOINT`（例: `http://localhost:3487/health`）を指定すると、ダッシュボード右上にステータスが表示されます。
 
-各種テストは `pnpm --filter browser test` で実行されます。テストでは一時ディレクトリに JSONL を構築し、サーバーロード (`+page.server.ts`) や raw ビューまで一連のデータフローを検証しています。
+テストは以下の通りです。
+
+- `pnpm run test`：ワークスペース共通の Node テスト（`node --test`）
+- `pnpm --filter browser test`：SvelteKit ルート/API の Vitest
+- `pnpm --filter browser exec tsc --noEmit`：ブラウザアプリの型チェック
+- `pnpm run qa`：上記すべてを一括で実行
 
 ## Slack/CDP セットアップ
 

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import type { RawPageData } from "$lib/viewModels/raw";
 import { resetConfigCache } from "../../../../../lib/server/config";
 import { load } from "../+page.server";
 
@@ -30,14 +31,14 @@ describe("routes/day/[date]/raw/+page.server", () => {
   });
 
   it("JSONL の生データを返す", async () => {
-    const result = await load({
+    const result = (await load({
       params: { date: TARGET_DATE },
       url: new URL(`http://example.test/day/${TARGET_DATE}/raw`),
       locals: {},
       depends: vi.fn(),
       fetch: vi.fn(),
       setHeaders: vi.fn(),
-    } as never);
+    } as never)) as RawPageData;
 
     expect(result.date).toBe(TARGET_DATE);
     expect(result.sources).toEqual(["github", "slack"]);

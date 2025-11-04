@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, unlinkSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import type { DayPageData } from "$lib/viewModels/day";
 import { resetConfigCache } from "../../../../lib/server/config";
 import { load } from "../+page.server";
 
@@ -30,14 +31,14 @@ describe("routes/day/[date]/+page.server", () => {
   });
 
   it("指定日のイベントとサマリを返す", async () => {
-    const result = await load({
+    const result = (await load({
       params: { date: TARGET_DATE },
       url: new URL(`http://example.test/day/${TARGET_DATE}`),
       locals: {},
       depends: vi.fn(),
       fetch: vi.fn(),
       setHeaders: vi.fn(),
-    } as never);
+    } as never)) as DayPageData;
 
     expect(result.date).toBe(TARGET_DATE);
     expect(result.summary).toContain("# レポート");
@@ -49,14 +50,14 @@ describe("routes/day/[date]/+page.server", () => {
   });
 
   it("source クエリでフィルタする", async () => {
-    const result = await load({
+    const result = (await load({
       params: { date: TARGET_DATE },
       url: new URL(`http://example.test/day/${TARGET_DATE}?source=slack`),
       locals: {},
       depends: vi.fn(),
       fetch: vi.fn(),
       setHeaders: vi.fn(),
-    } as never);
+    } as never)) as DayPageData;
 
     expect(result.events.map((ev) => ev.source)).toEqual(["slack", "slack"]);
     expect(result.sources).toEqual([
@@ -70,14 +71,14 @@ describe("routes/day/[date]/+page.server", () => {
     const summaryPath = join(dataDir, year, month, day, "summaries", "daily.md");
     unlinkSync(summaryPath);
 
-    const result = await load({
+    const result = (await load({
       params: { date: TARGET_DATE },
       url: new URL(`http://example.test/day/${TARGET_DATE}`),
       locals: {},
       depends: vi.fn(),
       fetch: vi.fn(),
       setHeaders: vi.fn(),
-    } as never);
+    } as never)) as DayPageData;
 
     expect(result.summary).toBeNull();
   });

@@ -8,7 +8,7 @@ import type {
   TimelineEvent,
 } from "./types";
 
-import type { ErrnoException } from "node:fs";
+type ErrnoException = NodeJS.ErrnoException;
 
 const eventsCache = new Map<string, DailyEventsResult>();
 const summaryCache = new Map<string, string | null>();

@@ -28,6 +28,7 @@ export default [
       },
       globals: {
         ...globals.node,
+        NodeJS: "readonly",
       },
     },
     plugins: { "@typescript-eslint": tsplugin },

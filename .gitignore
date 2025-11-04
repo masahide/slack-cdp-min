@@ -1,5 +1,26 @@
+# Node.js / package managers
 node_modules/
+pnpm-debug.log*
+
+# ReacLog specific
 .reaclog/
 data/
 log
 *.log
+
+# TypeScript
+*.tsbuildinfo
+
+# SvelteKit / Vite artefacts
+.svelte-kit/
+**/.svelte-kit/
+build/
+.vite/
+
+# Deployment adapters (ignore local deploy outputs)
+.vercel/
+.netlify/
+
+# OS cruft
+.DS_Store
+Thumbs.db

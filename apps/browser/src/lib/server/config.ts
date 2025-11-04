@@ -1,4 +1,4 @@
-import { resolve as resolvePath } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 
 export interface ServerConfig {
   dataDir: string;
@@ -13,7 +13,10 @@ export function loadServerConfig(): ServerConfig {
   }
 
   const dataDirEnv = process.env.REACLOG_DATA_DIR;
-  const dataDir = resolvePath(dataDirEnv && dataDirEnv.length > 0 ? dataDirEnv : "data");
+  const initCwd = process.env.INIT_CWD;
+
+  const fallbackDir = initCwd && initCwd.length > 0 ? join(initCwd, "data") : "data";
+  const dataDir = resolvePath(dataDirEnv && dataDirEnv.length > 0 ? dataDirEnv : fallbackDir);
 
   const healthEndpoint = process.env.REACLOG_HEALTH_ENDPOINT?.trim() ?? null;
 

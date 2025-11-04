@@ -7,7 +7,7 @@ import { fetchHealthStatus } from "$lib/server/health";
 import type { DashboardDay, DashboardLoadData } from "$lib/viewModels/dashboard";
 
 import type { PageServerLoad } from "./$types";
-import type { ErrnoException } from "node:fs";
+type ErrnoException = NodeJS.ErrnoException;
 
 const MAX_DAYS = 7;
 

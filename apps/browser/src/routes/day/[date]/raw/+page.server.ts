@@ -3,15 +3,10 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 
 import { resolveDataDir } from "$lib/server/config";
+import type { RawPageData, RawFileEntry } from "$lib/viewModels/raw";
 
 import type { PageServerLoad } from "./$types";
-import type { ErrnoException } from "node:fs";
-
-interface RawFileEntry {
-  source: string;
-  path: string;
-  lines: string[];
-}
+type ErrnoException = NodeJS.ErrnoException;
 
 export const load: PageServerLoad = async (event) => {
   event.depends?.("reaclog:day:raw");
@@ -36,11 +31,7 @@ export const load: PageServerLoad = async (event) => {
     date,
     sources,
     files,
-  } satisfies {
-    date: string;
-    sources: string[];
-    files: RawFileEntry[];
-  };
+  } satisfies RawPageData;
 };
 
 async function collectRawFiles(dayRoot: string): Promise<RawFileEntry[]> {

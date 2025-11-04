@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import type { DashboardLoadData } from "$lib/viewModels/dashboard";
 import { resetConfigCache } from "../../lib/server/config";
 import { load } from "../+page.server";
 
@@ -92,14 +93,14 @@ describe("routes/+page.server load", () => {
   });
 
   it("最新日から順にサマリカード用データを返す", async () => {
-    const result = await load({
+    const result = (await load({
       depends: vi.fn(),
       locals: {},
       params: {},
       url: new URL("http://example.test/"),
       fetch: vi.fn(),
       setHeaders: vi.fn(),
-    } as never);
+    } as never)) as DashboardLoadData;
 
     expect(result.days.map((day) => day.date)).toEqual(["2025-11-03", "2025-11-02", "2025-11-01"]);
     expect(result.days[0]).toMatchObject({
@@ -136,14 +137,14 @@ describe("routes/+page.server load", () => {
       )
     );
 
-    const result = await load({
+    const result = (await load({
       depends: vi.fn(),
       locals: {},
       params: {},
       url: new URL("http://example.test/"),
       fetch: fetchMock,
       setHeaders: vi.fn(),
-    } as never);
+    } as never)) as DashboardLoadData;
 
     expect(fetchMock).toHaveBeenCalledWith("http://health.test/status", expect.any(Object));
     expect(result.health).toEqual({
