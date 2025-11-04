@@ -434,16 +434,24 @@ export interface IngestionAdapter {
 
 ---
 
-## 5. CLI & バッチ
+## 5. 実行モデル & バッチ
 
-### 5.1 CLI（将来）
+### 5.1 `pnpm start`（利用者向けワンコマンド）
 
-- `reaclog ingest`：アダプタ起動（Slack/GitHub/Git）→ JSONL に追記
+- Slack デスクトップアプリ向け CDP 接続を確認しつつ、以下を **同時に** 起動する常駐コマンド。
+  1. **Slack Ingestor**：CDP から `events.jsonl` に追記。
+  2. **ブラウズ UI (SvelteKit)**：`http://localhost:4173`（デフォルト）で日次イベントを閲覧可能にする。ユーザーが即座に最新ログを確認できるよう、UI は開発者向けではなくエンドユーザー向けの情報設計（説明ラベル、検索/フィルタ）を提供。
+  3. **ヘルスチェック**：CDP 接続状態を 30 秒間隔で確認し、再接続や UI 上でのバナー表示につなげる。
+- `pnpm start -- --browser-port=4300 --data-dir=./data` のように、CLI オプションで UI ポートやデータディレクトリを上書き。
+- 起動失敗時（CDP へ接続できない等）は UI だけを起動し、ヘルスバナーに「Slack を開いてください」を表示する仕様とする。
+
+### 5.2 CLI 拡張（将来）
+
 - `reaclog summary --day 2025-11-03`：JSONL から日次要約を生成
 - `reaclog search --q "keyword"`：`rg` + `jq` で検索
 - `reaclog export --day 2025-11-03 --out daily-2025-11-03.md`
 
-### 5.2 スケジューリング
+### 5.3 スケジューリング
 
 - **Windows**：タスク スケジューラ
 - **Linux/macOS**：cron/systemd timer
@@ -512,11 +520,11 @@ export interface IngestionAdapter {
 
 ## 11. ブラウズ UI (SvelteKit)
 
-- **目的**：`events.jsonl` と日次 Markdown サマリを HTTP 経由で参照できる開発者向けビューア。
-- **スタック**：SvelteKit + Vite（`pnpm` ワークスペース内に `apps/browser` などのサブプロジェクトとして追加）。
+- **目的**：利用者が `events.jsonl` や日次サマリをブラウザで確認し、活動ログを自己レビューできるポータル。開発者向けではなく、業務ユーザーでも扱える導線（説明テキスト/状態表示）を備える。
+- **スタック**：SvelteKit + Vite（`pnpm` ワークスペース内 `apps/browser`）。CI/本番共通で `pnpm start` から連携起動される。
 - **起動方法**：
-  - `pnpm --filter browser dev` で `localhost:4173` を起動。
-  - 本番相当は `pnpm --filter browser build && pnpm --filter browser preview`。
+  - `pnpm start` により Slack Ingestor と同一プロセスで `pnpm --filter browser dev` 相当を立ち上げ、CDP 健康状態をトップページに表示。
+  - 単体起動も可能（`pnpm --filter browser dev` / `build` / `preview`）。
 - **データ取得**：
   - `src/lib/server/data.ts` に JSONL/Markdown 読み込みラッパーを実装。`dataDir` は共通設定 (`reaclog.config.json` or env) から解決。
   - ルーティング例：
@@ -527,11 +535,13 @@ export interface IngestionAdapter {
   - クライアント描画は Svelte コンポーネント。`+page.server.ts` でデータを読み取り `Load` で渡す。
   - 日跨ぎナビゲーション（前日/翌日）とソースフィルタ（Slack/GitHub/Git）を提供。
   - 日次 Markdown サマリ（`summaries/daily.md`）がある場合は右カラムでレンダリング。
+  - 利用者向けに CDP 接続ステータス、データ更新時刻、Slack 収集オン/オフ状態を UI で分かりやすく表示。
 - **セキュリティ**：
   - 初期版はローカルのみ (`0.0.0.0` で listen せず `localhost` 限定)。
   - 将来的に Basic 認証やトークンゲートを `hooks.server.ts` で追加できる構造にする。
 - **テスト**：
   - SvelteKit の `vitest` + `@sveltejs/kit/vite` テストを導入し、`dataDir` を tmp フォルダに向けたエンドツーエンド風テストを作成。
   - `pnpm --filter browser test` をCI `qa` ジョブに連結。
+  - `pnpm start` の結合テストでは、モック CDP を用意し UI がヘルスステータスを受け取ることを検証。
 
 ---
