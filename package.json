@@ -9,7 +9,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "test": "bash -lc 'shopt -s globstar nullglob; files=(tests/**/*.test.ts); if [ ${#files[@]} -eq 0 ]; then echo \"No tests found\"; exit 1; fi; node --import tsx --test \"${files[@]}\"'",
+    "test": "bash -lc 'files=$(find tests -type f -name \"*.test.ts\"); if [ -z \"$files\" ]; then echo \"No tests found\"; exit 1; fi; node --import tsx --test $files'",
     "test:slack": "node --import tsx --test \"tests/slack/**/*.test.ts\"",
     "qa": "pnpm run typecheck && pnpm run lint && pnpm run format && pnpm run test && pnpm --filter browser exec svelte-kit sync && pnpm --filter browser exec tsc --noEmit && pnpm --filter browser test"
   },

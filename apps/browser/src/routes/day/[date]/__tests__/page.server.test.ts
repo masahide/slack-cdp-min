@@ -11,22 +11,29 @@ const TARGET_DATE = "2025-11-03";
 
 describe("routes/day/[date]/+page.server", () => {
   let dataDir: string;
-  const originalEnv = process.env.REACLOG_DATA_DIR;
+  const originalDataEnv = process.env.REACLOG_DATA_DIR;
+  const originalConfigEnv = process.env.REACLOG_CONFIG_DIR;
 
   beforeEach(() => {
     resetConfigCache();
     dataDir = mkdtempSync(join(tmpdir(), "reaclog-day-"));
     process.env.REACLOG_DATA_DIR = dataDir;
+    process.env.REACLOG_CONFIG_DIR = join(dataDir, "config");
     seedData();
   });
 
   afterEach(() => {
     rmSync(dataDir, { recursive: true, force: true });
     resetConfigCache();
-    if (originalEnv === undefined) {
+    if (originalDataEnv === undefined) {
       delete process.env.REACLOG_DATA_DIR;
     } else {
-      process.env.REACLOG_DATA_DIR = originalEnv;
+      process.env.REACLOG_DATA_DIR = originalDataEnv;
+    }
+    if (originalConfigEnv === undefined) {
+      delete process.env.REACLOG_CONFIG_DIR;
+    } else {
+      process.env.REACLOG_CONFIG_DIR = originalConfigEnv;
     }
   });
 
@@ -47,6 +54,9 @@ describe("routes/day/[date]/+page.server", () => {
       { name: "github", count: 1, selected: true },
       { name: "slack", count: 2, selected: true },
     ]);
+    expect(result.clipboardTemplate.origin).toBe("default");
+    expect(result.clipboardTemplate.source.length).toBeGreaterThan(0);
+    expect(result.slackWorkspaceBaseUrl).toBeNull();
   });
 
   it("source クエリでフィルタする", async () => {
@@ -64,6 +74,7 @@ describe("routes/day/[date]/+page.server", () => {
       { name: "github", count: 1, selected: false },
       { name: "slack", count: 2, selected: true },
     ]);
+    expect(result.slackWorkspaceBaseUrl).toBeNull();
   });
 
   it("サマリが存在しない場合は null", async () => {
@@ -81,6 +92,25 @@ describe("routes/day/[date]/+page.server", () => {
     } as never)) as DayPageData;
 
     expect(result.summary).toBeNull();
+  });
+
+  it("Slack ワークスペースのベース URL を環境変数から読み込む", async () => {
+    process.env.REACLOG_SLACK_WORKSPACE = "example-team";
+    resetConfigCache();
+
+    const result = (await load({
+      params: { date: TARGET_DATE },
+      url: new URL(`http://example.test/day/${TARGET_DATE}`),
+      locals: {},
+      depends: vi.fn(),
+      fetch: vi.fn(),
+      setHeaders: vi.fn(),
+    } as never)) as DayPageData;
+
+    expect(result.slackWorkspaceBaseUrl).toBe("https://example-team.slack.com");
+
+    delete process.env.REACLOG_SLACK_WORKSPACE;
+    resetConfigCache();
   });
 
   function seedData() {

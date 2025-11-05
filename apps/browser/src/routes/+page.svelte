@@ -45,6 +45,7 @@
       <p class="generated-at">最終更新: {formatTimestamp(data.generatedAt)}</p>
     </div>
     <div class="header-side">
+      <a class="settings-link" href="/settings">テンプレート編集</a>
       <div class="status">
         <span class="status-label">CDP ステータス:</span>
         <span class={resolveHealthClass(data.health)}>
@@ -111,6 +112,12 @@
     gap: 0.75rem;
     flex-wrap: wrap;
     justify-content: flex-end;
+  }
+
+  .settings-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
   }
 
   .generated-at {

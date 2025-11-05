@@ -24,8 +24,9 @@
     type EventPresentation,
     type EventKind,
   } from "$lib/presentation/event";
+  import { resolveSlackPermalink } from "$lib/presentation/slack";
   import { buildClipboardPayload } from "$lib/presentation/clipboard";
-  import { copyToClipboard, PROMPT_HEADER } from "$lib/client/copy";
+  import { copyToClipboard } from "$lib/client/copy";
 
   export let data: PageData;
 
@@ -52,7 +53,7 @@
     return all.filter((event) => allowed.has(event.source));
   });
   const clipboardPayload = derived(events, (all) =>
-    buildClipboardPayload(data.date, all, data.summary ?? undefined)
+    buildClipboardPayload(data.date, all, data.summary ?? undefined, data.clipboardTemplate.source)
   );
 
   let lastUpdated = formatIsoTimestamp(computeLastTimestamp(data.events, data.date));
@@ -135,6 +136,7 @@
   const presentationCache = new Map<string, EventPresentation>();
   let copyFeedback: "success" | "error" | null = null;
   let copyTimer: ReturnType<typeof setTimeout> | null = null;
+  const slackWorkspaceBaseUrl = data.slackWorkspaceBaseUrl;
 
   const displayBadge = (event: TimelineEvent) => {
     const kind = classifyEventKind(event);
@@ -177,7 +179,7 @@
     if (!browser) {
       return;
     }
-    const text = `${PROMPT_HEADER}\n\n${get(clipboardPayload)}`;
+    const text = get(clipboardPayload);
     try {
       await copyToClipboard(text);
       setCopyFeedback("success");
@@ -304,6 +306,9 @@
     await pollEvents();
     toastVisible.set(false);
   };
+
+  const slackPermalink = (event: TimelineEvent) =>
+    resolveSlackPermalink(event, slackWorkspaceBaseUrl);
 </script>
 
 <svelte:head>
@@ -333,6 +338,13 @@
         <button type="button" class="clipboard-button" on:click={handleCopyAll}>
           LLM 用にコピー
         </button>
+        <a class="settings-link" href="/settings">テンプレート編集</a>
+        <span
+          class:custom-template={data.clipboardTemplate.origin === "custom"}
+          class="template-indicator"
+        >
+          {data.clipboardTemplate.origin === "custom" ? "カスタム適用中" : "デフォルト使用"}
+        </span>
         {#if copyFeedback === "success"}
           <span class="clipboard-status success">コピーしました</span>
         {:else if copyFeedback === "error"}
@@ -373,6 +385,7 @@
       {:else}
         <ul>
           {#each $filteredEvents as event}
+            {@const permalink = slackPermalink(event)}
             <li class="timeline-item">
               <div class="time">{formatEventTime(event.ts, data.date)}</div>
               <div class="body">
@@ -382,6 +395,16 @@
                   </span>
                   {#if getEventChannelLabel(event)}
                     <span class="channel-tag">{getEventChannelLabel(event)}</span>
+                  {/if}
+                  {#if permalink}
+                    <a
+                      class="timeline-permalink"
+                      href={permalink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Slackで開く
+                    </a>
                   {/if}
                 </div>
                 <div class="description" aria-label={`本文: ${describeEvent(event)}`}>
@@ -549,6 +572,25 @@
     color: #ef4444;
   }
 
+  .settings-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .template-indicator {
+    font-size: 0.78rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    background: var(--button-muted-bg);
+    color: var(--button-muted-text);
+  }
+
+  .template-indicator.custom-template {
+    background: rgba(249, 115, 22, 0.2);
+    color: #f97316;
+  }
+
   .filters {
     border: 1px solid var(--surface-border-strong);
     border-radius: 12px;
@@ -682,6 +724,16 @@
   :global([data-theme="dark"]) .channel-tag {
     background: rgba(148, 163, 184, 0.22);
     color: #cbd5f5;
+  }
+
+  .timeline-permalink {
+    font-size: 0.75rem;
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .timeline-permalink:hover {
+    text-decoration: underline;
   }
 
   .description {

@@ -11,4 +11,9 @@ export interface DayPageData {
   events: TimelineEvent[];
   summary: string | null;
   sources: DaySourceOption[];
+  clipboardTemplate: {
+    source: string;
+    origin: "default" | "custom";
+  };
+  slackWorkspaceBaseUrl: string | null;
 }

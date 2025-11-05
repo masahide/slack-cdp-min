@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
 
 import type { DashboardLoadData } from "$lib/viewModels/dashboard";
 import type { DayPageData } from "$lib/viewModels/day";
@@ -15,12 +16,14 @@ describe("End-to-end data flow", () => {
   let fixture: JsonlFixture;
   const originalDataDir = process.env.REACLOG_DATA_DIR;
   const originalHealth = process.env.REACLOG_HEALTH_ENDPOINT;
+  const originalConfigDir = process.env.REACLOG_CONFIG_DIR;
 
   beforeEach(async () => {
     fixture = await createJsonlFixture({ source: "slack", date: "2025-11-03" });
     dataDir = fixture.dataDir;
     process.env.REACLOG_DATA_DIR = dataDir;
     process.env.REACLOG_HEALTH_ENDPOINT = "http://localhost:8799/health";
+    process.env.REACLOG_CONFIG_DIR = join(dataDir, "config");
     resetConfigCache();
     await seedDataset();
   });
@@ -38,6 +41,12 @@ describe("End-to-end data flow", () => {
       process.env.REACLOG_HEALTH_ENDPOINT = originalHealth;
     } else {
       delete process.env.REACLOG_HEALTH_ENDPOINT;
+    }
+
+    if (originalConfigDir) {
+      process.env.REACLOG_CONFIG_DIR = originalConfigDir;
+    } else {
+      delete process.env.REACLOG_CONFIG_DIR;
     }
   });
 

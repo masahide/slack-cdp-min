@@ -1,5 +1,3 @@
-export const PROMPT_HEADER = `以下は本日の活動ログです。内容を要約し、重要なコミットやタスクの進捗、懸念点を抽出してください。`;
-
 export async function copyToClipboard(text: string): Promise<void> {
   if (typeof navigator !== "undefined" && navigator.clipboard) {
     await navigator.clipboard.writeText(text);
