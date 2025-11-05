@@ -372,6 +372,8 @@ export interface IngestionAdapter {
   - `Network.webSocketFrameReceived`：リッチテキストやリアルタイム編集をキャッシュ。
   - `Network.responseReceived`：一部 API 応答を補完キャッシュとして利用。
   - **DOM スナップショット**：リアクション検知直後に `Runtime.evaluate` で可視 DOM から本文を抜き出す。DOM 取得は既定で有効（`REACLOG_DISABLE_DOM_CAPTURE=1` で無効化可能）。
+    - トリガー元は `/api/reactions.*` への Fetch リクエストのみ。Slack クライアントが自分のリアクションを送信する際にだけ DOM 取得が実行される。
+    - WebSocket 経由で他ユーザーのリアクションを受信しても DOM キャプチャは発火しない。必要最小限のキャッシュ更新のみを行う。
 - **正規化**
   - `kind='post'|'reaction'`
   - `subject`：`[#{channel}] メッセージの先頭120字` など軽量な見出し
@@ -496,6 +498,15 @@ Slack アダプタは環境変数で挙動を切り替えられる。
   REACLOG_DISABLE_DOM_CAPTURE=1 REACLOG_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log
   ```
 
+### 手動検証（リアクション DOM キャプチャ）
+
+1. Slack 起動済みの状態で `REACLOG_DEBUG=slack:verbose pnpm start` を実行し、リアクションを 1 件追加する。
+   - 自分の操作直後に `{"ok":true,...}` の DOM ログと JSONL への記録が生成されることを確認する。
+2. 他メンバーのリアクション通知が届くのを待ち、`{"ok":false,...,"reason":"dom-not-found"}` などが追加で現れないことを確認する（WebSocket 経由では DOM キャプチャが発火しないため）。
+3. 必要に応じて `REACLOG_DISABLE_DOM_CAPTURE=1` で再実行し、DOM キャプチャが無効化されると `message_text` が空のままになるフォールバック挙動を確認する。
+
+````
+
 Slack 以外のソースを含む統合ログの確認には `/data/YY/MM/DD/<source>/events.jsonl` を直接参照する。
 
 ---
@@ -504,23 +515,23 @@ Slack 以外のソースを含む統合ログの確認には `/data/YY/MM/DD/<so
 
 ```json
 {
-  "timezone": "Asia/Tokyo",
-  "dataDir": "./data", // ルートディレクトリ
-  "slack": { "enabled": true },
-  "github": {
-    "enabled": true,
-    "token": "${GH_TOKEN}",
-    "repos": ["you/repo1", "you/repo2"],
-    "intervalMs": 300000
-  },
-  "gitLocal": {
-    "enabled": true,
-    "socket": "/tmp/reaclog.sock" // Windows は \\.\pipe\reaclog
-  },
-  "retention": { "days": 365 }, // ディレクトリ削除でローテーション
-  "llm": { "model": "gpt-*-mini", "maxChunkChars": 3500 }
+"timezone": "Asia/Tokyo",
+"dataDir": "./data", // ルートディレクトリ
+"slack": { "enabled": true },
+"github": {
+  "enabled": true,
+  "token": "${GH_TOKEN}",
+  "repos": ["you/repo1", "you/repo2"],
+  "intervalMs": 300000
+},
+"gitLocal": {
+  "enabled": true,
+  "socket": "/tmp/reaclog.sock" // Windows は \\.\pipe\reaclog
+},
+"retention": { "days": 365 }, // ディレクトリ削除でローテーション
+"llm": { "model": "gpt-*-mini", "maxChunkChars": 3500 }
 }
-```
+````
 
 ---
 

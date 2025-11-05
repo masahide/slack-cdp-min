@@ -423,7 +423,7 @@ export class SlackAdapter implements IngestionAdapter {
   private emit: EmitFn | null = null;
   private readonly cache: Map<string, { text?: string; user?: string }> = new Map();
   private readonly seenUids: Set<string> = new Set();
-  private readonly domCaptureInFlight: Set<string> = new Set();
+  private readonly domCaptureTasks: Map<string, Promise<void>> = new Map();
   private readonly domCaptureByTs: Map<
     string,
     { text: string; channelName?: string | null; capturedAt: number }
@@ -597,6 +597,18 @@ export class SlackAdapter implements IngestionAdapter {
         return [];
       }
 
+      const candidate = this.buildReactionDomCandidate({
+        ...(payload as Record<string, unknown>),
+        channel: channelId,
+        channel_id: channelId,
+        reaction: reactionName,
+        timestamp: rawItemTs,
+        item,
+      });
+      if (candidate) {
+        await this.captureDomCandidate(candidate);
+      }
+
       const domCaptured = this.consumeDomCapture(itemTsForEvent);
       if (domCaptured?.text) {
         this.cacheMessage(channelId, itemTsForEvent, { text: domCaptured.text });
@@ -653,7 +665,6 @@ export class SlackAdapter implements IngestionAdapter {
   private handleWebSocketFrame(event: WebSocketFrameEvent): void {
     const payload = event.response.payloadData;
     if (!payload || payload.length > 512 * 1024) return;
-    this.captureMessageFromDomIfReaction(payload);
     try {
       const data = JSON.parse(payload);
       if (data?.type === "message" && data.channel && data.ts) {
@@ -672,53 +683,10 @@ export class SlackAdapter implements IngestionAdapter {
     }
   }
 
-  private captureMessageFromDomIfReaction(rawPayload: string): void {
-    if (this.domCaptureDisabled) return;
-    if (!REACTION_PAYLOAD_KEYS.some((token) => rawPayload.includes(token))) return;
-    for (const candidate of this.extractReactionCandidates(rawPayload)) {
-      this.scheduleDomCapture(candidate);
-    }
-  }
-
-  private extractReactionCandidates(rawPayload: string): ReactionDomCandidate[] {
-    try {
-      const parsed = JSON.parse(rawPayload);
-      const queue: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
-      const seen = new Set<string>();
-      const candidates: ReactionDomCandidate[] = [];
-
-      const pushCandidate = (candidate: ReactionDomCandidate | null): void => {
-        if (!candidate) return;
-        const key = candidate.normalizedTs;
-        if (!key || seen.has(key)) return;
-        seen.add(key);
-        candidates.push(candidate);
-      };
-
-      const visit = (value: unknown): void => {
-        if (!value || typeof value !== "object") return;
-        if (Array.isArray(value)) {
-          for (const item of value) visit(item);
-          return;
-        }
-        const obj = value as Record<string, unknown>;
-        pushCandidate(this.buildReactionDomCandidate(obj));
-        for (const nested of Object.values(obj)) {
-          visit(nested);
-        }
-      };
-
-      for (const item of queue) visit(item);
-      return candidates;
-    } catch {
-      return [];
-    }
-  }
-
   private buildReactionDomCandidate(value: Record<string, unknown>): ReactionDomCandidate | null {
     const type = this.asString(value.type);
     const subtype = this.asString(value.subtype);
-    const reactionName = this.asString(value.reaction);
+    const reactionName = this.asString(value.reaction) ?? this.asString(value.name);
     const indicatesReaction =
       (type && REACTION_PAYLOAD_KEYS.includes(type)) ||
       (subtype && REACTION_PAYLOAD_KEYS.includes(subtype)) ||
@@ -731,6 +699,7 @@ export class SlackAdapter implements IngestionAdapter {
       this.asString(item?.ts) ??
       this.asString(value.message_ts) ??
       this.asString(value.event_ts) ??
+      this.asString(value.timestamp) ??
       this.asString(value.ts);
     if (!tsCandidate) return null;
 
@@ -749,22 +718,29 @@ export class SlackAdapter implements IngestionAdapter {
   }
 
   private scheduleDomCapture(candidate: ReactionDomCandidate): void {
+    void this.captureDomCandidate(candidate);
+  }
+
+  private async captureDomCandidate(candidate: ReactionDomCandidate): Promise<void> {
     if (this.domCaptureDisabled) return;
     const key = candidate.normalizedTs;
     if (!key) return;
-    if (this.domCaptureInFlight.has(key)) return;
-    this.domCaptureInFlight.add(key);
-    (async () => {
-      try {
-        await this.runDomCapture(candidate);
-      } catch (err) {
-        this.debug("dom capture failed", this.safePreview(err));
-      } finally {
-        this.domCaptureInFlight.delete(key);
-      }
-    })().catch(() => {
-      /* handled in inner scope */
+    const existing = this.domCaptureTasks.get(key);
+    if (existing) {
+      await existing.catch(() => {
+        /* upstreamでログ済み */
+      });
+      return;
+    }
+    const task = this.runDomCapture(candidate).catch((err) => {
+      this.debug("dom capture failed", this.safePreview(err));
     });
+    this.domCaptureTasks.set(key, task);
+    try {
+      await task;
+    } finally {
+      this.domCaptureTasks.delete(key);
+    }
   }
 
   private async runDomCapture(candidate: ReactionDomCandidate): Promise<void> {

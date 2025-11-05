@@ -32,7 +32,7 @@ describe("SlackAdapter + JsonlWriter integration", () => {
         postData: JSON.stringify({
           channel: "C123",
           text: "integration",
-          user: "U777",
+          user: "U_TEST",
           ts: "1711117777.000888",
         }),
       },
