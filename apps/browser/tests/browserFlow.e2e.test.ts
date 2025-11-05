@@ -1,7 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 import type { DashboardLoadData } from "$lib/viewModels/dashboard";
 import type { DayPageData } from "$lib/viewModels/day";
@@ -10,22 +7,26 @@ import { resetConfigCache } from "../src/lib/server/config";
 import { load as dashboardLoad } from "../src/routes/+page.server";
 import { load as dayLoad } from "../src/routes/day/[date]/+page.server";
 import { load as rawLoad } from "../src/routes/day/[date]/raw/+page.server";
+import type { JsonlFixture } from "./utils";
+import { createJsonlFixture, writeDailySummary } from "./utils";
 
 describe("End-to-end data flow", () => {
   let dataDir: string;
+  let fixture: JsonlFixture;
   const originalDataDir = process.env.REACLOG_DATA_DIR;
   const originalHealth = process.env.REACLOG_HEALTH_ENDPOINT;
 
-  beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "reaclog-e2e-"));
+  beforeEach(async () => {
+    fixture = await createJsonlFixture({ source: "slack", date: "2025-11-03" });
+    dataDir = fixture.dataDir;
     process.env.REACLOG_DATA_DIR = dataDir;
     process.env.REACLOG_HEALTH_ENDPOINT = "http://localhost:8799/health";
     resetConfigCache();
-    seedDataset();
+    await seedDataset();
   });
 
-  afterEach(() => {
-    rmSync(dataDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await fixture.cleanup();
     resetConfigCache();
     if (originalDataDir) {
       process.env.REACLOG_DATA_DIR = originalDataDir;
@@ -87,18 +88,13 @@ describe("End-to-end data flow", () => {
     );
   });
 
-  function seedDataset() {
-    const base = join(dataDir, "2025", "11", "03");
-    mkdirSync(join(base, "slack"), { recursive: true });
-    writeFileSync(
-      join(base, "slack", "events.jsonl"),
-      `${JSON.stringify({ uid: "1", source: "slack", kind: "post" })}\n${JSON.stringify({
-        uid: "2",
-        source: "slack",
-        kind: "reaction",
-      })}\n`
-    );
-    mkdirSync(join(base, "summaries"), { recursive: true });
-    writeFileSync(join(base, "summaries", "daily.md"), "# 2025-11-03\n\n## Done\n- sample");
+  async function seedDataset() {
+    await fixture.append({ uid: "1", source: "slack", kind: "post" });
+    await fixture.append({ uid: "2", source: "slack", kind: "reaction" });
+    await writeDailySummary({
+      dataDir,
+      date: fixture.date,
+      content: "# 2025-11-03\n\n## Done\n- sample",
+    });
   }
 });

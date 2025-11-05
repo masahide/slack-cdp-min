@@ -1,15 +1,9 @@
 <script lang="ts">
-  import { marked } from "marked";
+  import { renderSummaryMarkdown } from "$lib/markdown";
 
   export let markdown: string | null = null;
 
-  marked.setOptions({
-    breaks: true,
-    mangle: false,
-    headerIds: false,
-  });
-
-  $: rendered = markdown ? marked.parse(markdown) : "";
+  $: rendered = markdown ? renderSummaryMarkdown(markdown) : "";
 </script>
 
 {#if rendered}
@@ -20,15 +14,16 @@
 
 <style>
   .markdown :global(code) {
-    background: #f1f5f9;
+    background: var(--inline-code-bg);
+    color: var(--inline-code-text);
     padding: 0.15rem 0.3rem;
     border-radius: 4px;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   }
 
   .markdown :global(pre) {
-    background: #0f172a;
-    color: #f8fafc;
+    background: var(--code-block-bg);
+    color: var(--code-block-text);
     padding: 0.75rem;
     border-radius: 8px;
     overflow-x: auto;
@@ -42,7 +37,7 @@
   }
 
   .placeholder {
-    color: #777;
+    color: var(--placeholder-text);
     font-size: 0.9rem;
   }
 </style>

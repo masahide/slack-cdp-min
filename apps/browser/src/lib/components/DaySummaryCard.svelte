@@ -32,9 +32,9 @@
 <style>
   .card {
     padding: 1.25rem;
-    border: 1px solid #ddd;
+    border: 1px solid var(--surface-border-strong);
     border-radius: 12px;
-    background-color: #fff;
+    background-color: var(--surface-card);
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
@@ -48,7 +48,7 @@
 
   .total {
     font-size: 1rem;
-    color: #333;
+    color: var(--text-primary);
   }
 
   .sources {
@@ -67,11 +67,12 @@
 
   .source-count {
     margin-left: 0.25rem;
-    color: #555;
+    color: var(--text-secondary);
   }
 
   .summary {
-    background: #f8f8f8;
+    background: var(--code-block-bg);
+    color: var(--code-block-text);
     border-radius: 8px;
     padding: 0.75rem;
     white-space: pre-wrap;
@@ -80,13 +81,13 @@
   }
 
   .no-summary {
-    color: #888;
+    color: var(--placeholder-text);
     font-size: 0.85rem;
   }
 
   .detail-link {
     align-self: flex-start;
-    color: #2563eb;
+    color: var(--accent);
     text-decoration: none;
     font-weight: 600;
     font-size: 0.9rem;

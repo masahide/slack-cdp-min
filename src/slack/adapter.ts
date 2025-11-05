@@ -210,6 +210,29 @@ const DOM_CAPTURE_SCRIPT = `(function reaclogCapture(tsList, selectors, debugMod
     };
     const matchesNeedle = (value) =>
       typeof value === "string" && needles.some((needle) => value.includes(needle));
+    const cleanupSelectors = [
+      "[data-qa='message_reactions']",
+      "[data-qa='message-reactions']",
+      "[data-qa='message_actions']",
+      "[data-qa='add-reaction']",
+      "[data-qa='more_message_actions']",
+      ".c-reaction",
+      ".c-reaction_bar",
+      ".c-message_kit__reaction",
+      ".c-message_kit__reaction_bar",
+      ".c-message_kit__actions",
+      ".p-message_pane_message__actions",
+    ];
+    const sanitizeNode = (node) => {
+      if (!node || typeof node.cloneNode !== "function") return node;
+      const clone = node.cloneNode(true);
+      for (const selector of cleanupSelectors) {
+        try {
+          clone.querySelectorAll(selector).forEach((element) => element.remove());
+        } catch (err) {}
+      }
+      return clone;
+    };
     const describeNode = (node, index) => {
       if (!node || typeof node !== "object") return null;
       const tag = typeof node.tagName === "string" ? node.tagName.toLowerCase() : null;
@@ -316,7 +339,8 @@ const DOM_CAPTURE_SCRIPT = `(function reaclogCapture(tsList, selectors, debugMod
       } catch (err) {}
     }
     const source = body || target;
-    const rawText = source?.innerText || source?.textContent || "";
+    const sanitized = sanitizeNode(source);
+    const rawText = sanitized?.innerText || sanitized?.textContent || "";
     const text = typeof rawText === "string" ? rawText.trim() : "";
     if (!text) {
       return {
