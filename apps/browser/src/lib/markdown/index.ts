@@ -28,11 +28,10 @@ const sanitizer = {
   },
 };
 
-const messageRenderer = new Marked({
+const messageRenderer = new Marked();
+messageRenderer.setOptions({
   gfm: true,
   breaks: true,
-  mangle: false,
-  headerIds: false,
 });
 
 messageRenderer.use(sanitizer);
@@ -42,14 +41,14 @@ export function renderMessageMarkdown(source: string): string {
     return "";
   }
   const normalized = normalizeSlackFormatting(source);
-  return messageRenderer.parse(normalized);
+  const output = messageRenderer.parse(normalized);
+  return typeof output === "string" ? output : normalized;
 }
 
-const summaryRenderer = new Marked({
+const summaryRenderer = new Marked();
+summaryRenderer.setOptions({
   gfm: true,
   breaks: true,
-  mangle: false,
-  headerIds: false,
 });
 
 summaryRenderer.use(sanitizer);
@@ -58,7 +57,8 @@ export function renderSummaryMarkdown(source: string): string {
   if (!source) {
     return "";
   }
-  return summaryRenderer.parse(source);
+  const output = summaryRenderer.parse(source);
+  return typeof output === "string" ? output : source;
 }
 
 function isUnsafeUrl(href: string): boolean {
@@ -125,8 +125,11 @@ function renderElement(element: SlackRichTextElement): string {
     return "";
   }
   switch (element.type) {
-    case "text":
-      return applyTextStyle(element.text ?? "", element.style ?? {});
+    case "text": {
+      const text = typeof element.text === "string" ? element.text : "";
+      const style = element.style as Record<string, boolean> | undefined;
+      return applyTextStyle(text, style);
+    }
     case "link":
       if (element.url) {
         const label = element.text ?? element.url;
@@ -142,21 +145,22 @@ function renderElement(element: SlackRichTextElement): string {
   }
 }
 
-function applyTextStyle(text: string, style: Record<string, boolean>): string {
+function applyTextStyle(text: string, style?: Record<string, boolean>): string {
   let result = text;
-  if (style.code) {
+  const applied = style ?? {};
+  if (applied.code) {
     result = "`" + result + "`";
   }
-  if (style.bold) {
+  if (applied.bold) {
     result = "**" + result + "**";
   }
-  if (style.italic) {
+  if (applied.italic) {
     result = "_" + result + "_";
   }
-  if (style.strike) {
+  if (applied.strike) {
     result = "~~" + result + "~~";
   }
-  if (style.underline) {
+  if (applied.underline) {
     result = "__" + result + "__";
   }
   return result;

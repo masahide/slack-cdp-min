@@ -109,9 +109,7 @@ async function safeReaddir(path: string) {
   }
 }
 
-export async function readJsonlFile(
-  filePath: string
-): Promise<Array<Record<string, unknown>>> {
+export async function readJsonlFile(filePath: string): Promise<Array<Record<string, unknown>>> {
   const records: Array<Record<string, unknown>> = [];
   try {
     const content = await fs.readFile(filePath, "utf-8");
@@ -135,7 +133,10 @@ export async function readJsonlFile(
   return records;
 }
 
-export function normalizeEvent(raw: Record<string, unknown>, fallbackSource: string): TimelineEvent {
+export function normalizeEvent(
+  raw: Record<string, unknown>,
+  fallbackSource: string
+): TimelineEvent {
   const uid = typeof raw.uid === "string" ? raw.uid : createSyntheticUid(raw);
   const source =
     typeof raw.source === "string" && raw.source.length > 0 ? raw.source : fallbackSource;

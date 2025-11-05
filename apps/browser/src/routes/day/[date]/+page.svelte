@@ -24,6 +24,8 @@
     type EventPresentation,
     type EventKind,
   } from "$lib/presentation/event";
+  import { buildClipboardPayload } from "$lib/presentation/clipboard";
+  import { copyToClipboard, PROMPT_HEADER } from "$lib/client/copy";
 
   export let data: PageData;
 
@@ -49,6 +51,9 @@
     const allowed = new Set(selection);
     return all.filter((event) => allowed.has(event.source));
   });
+  const clipboardPayload = derived(events, (all) =>
+    buildClipboardPayload(data.date, all, data.summary ?? undefined)
+  );
 
   let lastUpdated = formatIsoTimestamp(computeLastTimestamp(data.events, data.date));
 
@@ -110,6 +115,9 @@
     unsubscribeEvents();
     eventSource?.close();
     stopFallback();
+    if (copyTimer) {
+      clearTimeout(copyTimer);
+    }
   });
 
   const toggleSource = (name: string, checked: boolean) => {
@@ -125,6 +133,8 @@
   };
 
   const presentationCache = new Map<string, EventPresentation>();
+  let copyFeedback: "success" | "error" | null = null;
+  let copyTimer: ReturnType<typeof setTimeout> | null = null;
 
   const displayBadge = (event: TimelineEvent) => {
     const kind = classifyEventKind(event);
@@ -162,6 +172,34 @@
   const toggleTheme = () => {
     themeController.toggle();
   };
+
+  const handleCopyAll = async () => {
+    if (!browser) {
+      return;
+    }
+    const text = `${PROMPT_HEADER}\n\n${get(clipboardPayload)}`;
+    try {
+      await copyToClipboard(text);
+      setCopyFeedback("success");
+    } catch (error) {
+      console.error("copy failed", error);
+      setCopyFeedback("error");
+    }
+  };
+
+  function setCopyFeedback(value: "success" | "error" | null) {
+    if (copyTimer) {
+      clearTimeout(copyTimer);
+      copyTimer = null;
+    }
+    copyFeedback = value;
+    if (value) {
+      copyTimer = setTimeout(() => {
+        copyFeedback = null;
+        copyTimer = null;
+      }, 3000);
+    }
+  }
 
   function handleIncomingEvent(event: TimelineEvent) {
     if (deliveredUids.has(event.uid)) {
@@ -280,8 +318,8 @@
       <p class="updated-at">最終記録: {lastUpdated}</p>
     </div>
     <div class="header-actions">
-      <label class="theme-label" for="theme-select">テーマ</label>
       <div class="theme-controls">
+        <label class="theme-label" for="theme-select">テーマ</label>
         <select id="theme-select" bind:value={$themeMode} on:change={handleThemeChange}>
           {#each themeOptions as option}
             <option value={option.value}>
@@ -290,6 +328,16 @@
           {/each}
         </select>
         <button type="button" class="theme-toggle" on:click={toggleTheme}>切替</button>
+      </div>
+      <div class="clipboard-controls">
+        <button type="button" class="clipboard-button" on:click={handleCopyAll}>
+          LLM 用にコピー
+        </button>
+        {#if copyFeedback === "success"}
+          <span class="clipboard-status success">コピーしました</span>
+        {:else if copyFeedback === "error"}
+          <span class="clipboard-status error">コピーできませんでした</span>
+        {/if}
       </div>
     </div>
   </header>
@@ -414,7 +462,8 @@
   .header-actions {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 1rem;
+    flex-wrap: wrap;
   }
 
   .theme-label {
@@ -426,6 +475,7 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
+    flex-wrap: wrap;
   }
 
   select {
@@ -451,13 +501,52 @@
     padding: 0.35rem 0.8rem;
     font-size: 0.85rem;
     cursor: pointer;
-    transition: background 0.2s ease, transform 0.2s ease;
+    transition:
+      background 0.2s ease,
+      transform 0.2s ease;
   }
 
   .theme-toggle:hover {
     background: var(--accent);
     color: #fff;
     transform: translateY(-1px);
+  }
+
+  .clipboard-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .clipboard-button {
+    border: none;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.85rem;
+    padding: 0.4rem 1.1rem;
+    cursor: pointer;
+    transition:
+      background 0.2s ease,
+      transform 0.2s ease;
+  }
+
+  .clipboard-button:hover {
+    background: var(--accent-strong);
+    transform: translateY(-1px);
+  }
+
+  .clipboard-status {
+    font-size: 0.8rem;
+  }
+
+  .clipboard-status.success {
+    color: #10b981;
+  }
+
+  .clipboard-status.error {
+    color: #ef4444;
   }
 
   .filters {
@@ -561,7 +650,7 @@
     border-color: rgba(59, 130, 246, 0.25);
   }
 
-  [data-theme="dark"] .kind-post {
+  :global([data-theme="dark"]) .kind-post {
     background: rgba(96, 165, 250, 0.2);
     color: #bfdbfe;
     border-color: rgba(96, 165, 250, 0.3);
@@ -573,7 +662,7 @@
     border-color: rgba(16, 185, 129, 0.25);
   }
 
-  [data-theme="dark"] .kind-reaction {
+  :global([data-theme="dark"]) .kind-reaction {
     background: rgba(52, 211, 153, 0.2);
     color: #bbf7d0;
     border-color: rgba(52, 211, 153, 0.3);
@@ -590,7 +679,7 @@
     letter-spacing: 0.02em;
   }
 
-  [data-theme="dark"] .channel-tag {
+  :global([data-theme="dark"]) .channel-tag {
     background: rgba(148, 163, 184, 0.22);
     color: #cbd5f5;
   }

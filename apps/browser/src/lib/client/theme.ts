@@ -22,10 +22,13 @@ export interface ThemeController {
 }
 
 export function createThemeController(options: ThemeControllerOptions = {}): ThemeController {
+  const globalScope: typeof globalThis | undefined =
+    typeof globalThis !== "undefined" ? globalThis : undefined;
+
   const {
     initialTheme = "system",
-    storage = typeof localStorage !== "undefined" ? localStorage : null,
-    matchMedia = typeof window !== "undefined" ? window.matchMedia.bind(window) : undefined,
+    storage = resolveStorage(options.storage, globalScope),
+    matchMedia = resolveMatchMedia(options.matchMedia, globalScope),
     applyTheme = defaultApplyTheme,
   } = options;
 
@@ -122,13 +125,48 @@ export function createThemeController(options: ThemeControllerOptions = {}): The
 }
 
 function defaultApplyTheme(theme: ThemeValue, mode: ThemeMode) {
-  if (typeof document === "undefined") {
+  const doc =
+    typeof globalThis !== "undefined" && "document" in globalThis
+      ? (globalThis.document as Document)
+      : null;
+  if (!doc) {
     return;
   }
-  const root = document.documentElement;
+  const root = doc.documentElement;
   root.dataset.theme = theme;
   root.dataset.themeMode = mode;
   root.style.setProperty("color-scheme", theme);
+}
+
+function resolveStorage(
+  provided: Storage | null | undefined,
+  scope: typeof globalThis | undefined
+): Storage | null {
+  if (typeof provided !== "undefined") {
+    return provided ?? null;
+  }
+  if (scope && "localStorage" in scope) {
+    try {
+      return scope.localStorage as Storage;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function resolveMatchMedia(
+  provided: ((query: string) => MediaQueryList) | undefined,
+  scope: typeof globalThis | undefined
+): ((query: string) => MediaQueryList) | undefined {
+  if (typeof provided !== "undefined") {
+    return provided;
+  }
+  const candidate = scope as Window | undefined;
+  if (candidate && typeof candidate.matchMedia === "function") {
+    return candidate.matchMedia.bind(candidate);
+  }
+  return undefined;
 }
 
 export const themeController = createThemeController();

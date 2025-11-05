@@ -21,9 +21,20 @@ describe("theme controller", () => {
           listeners.splice(index, 1);
         }
       },
+      addListener: (listener: MediaListener) => {
+        if (!listeners.includes(listener)) {
+          listeners.push(listener);
+        }
+      },
+      removeListener: (listener: MediaListener) => {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) {
+          listeners.splice(index, 1);
+        }
+      },
       onchange: null,
       dispatchEvent: () => false,
-    } as MediaQueryList;
+    } as unknown as MediaQueryList;
   });
 
   beforeEach(() => {

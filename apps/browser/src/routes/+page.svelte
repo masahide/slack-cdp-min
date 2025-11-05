@@ -195,7 +195,9 @@
     padding: 0.35rem 0.8rem;
     font-size: 0.85rem;
     cursor: pointer;
-    transition: background 0.2s ease, transform 0.2s ease;
+    transition:
+      background 0.2s ease,
+      transform 0.2s ease;
   }
 
   .theme-toggle:hover {

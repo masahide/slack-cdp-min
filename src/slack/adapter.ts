@@ -352,6 +352,13 @@ const DOM_CAPTURE_SCRIPT = `(function reaclogCapture(tsList, selectors, debugMod
       };
     }
     let channelName = null;
+    let channelId = null;
+    const headerNode = (body || target)?.closest(
+      "[data-qa='message_container'], .p-message_pane_message, .p-threads_view__thread_message"
+    );
+    if (headerNode) {
+      channelId = attr(headerNode, "data-qa-channel-id") || attr(headerNode, "data-qa-conversation-id");
+    }
     for (const selector of channelSelectors) {
       try {
         const found = document.querySelector(selector);
@@ -364,9 +371,27 @@ const DOM_CAPTURE_SCRIPT = `(function reaclogCapture(tsList, selectors, debugMod
         }
       } catch (err) {}
     }
+    if (!channelName) {
+      try {
+        const inline = document.querySelector(
+          "[data-qa='inline_channel_entity'][data-channel-id] [data-qa='inline_channel_entity__name']"
+        );
+        if (inline && typeof inline.textContent === "string") {
+          channelName = inline.textContent.trim();
+          const owner = inline.closest("[data-qa='inline_channel_entity']");
+          if (owner && typeof owner.getAttribute === "function") {
+            const inlineId = owner.getAttribute("data-channel-id");
+            if (inlineId) {
+              channelId = inlineId;
+            }
+          }
+        }
+      } catch (err) {}
+    }
     return {
       text,
       channel: channelName,
+      channelId,
       matchedTs: collectTs(target),
     };
   } catch (err) {
@@ -421,6 +446,7 @@ type DomEvaluationSuccess = {
   ok: true;
   text: string;
   channelName?: string | null;
+  channelId?: string | null;
   matchedTs?: string[];
 };
 
@@ -450,8 +476,9 @@ export class SlackAdapter implements IngestionAdapter {
   private readonly domCaptureTasks: Map<string, Promise<void>> = new Map();
   private readonly domCaptureByTs: Map<
     string,
-    { text: string; channelName?: string | null; capturedAt: number }
+    { text: string; channelName?: string | null; channelId?: string | null; capturedAt: number }
   > = new Map();
+  private readonly channelNames: Map<string, string> = new Map();
   private readonly debugEnabled =
     DEBUG_TARGETS.has("slack") || DEBUG_TARGETS.has("slack:verbose") || DOM_PROBE_DEBUG_ENABLED;
   private readonly debugVerboseEnabled = DEBUG_TARGETS.has("slack:verbose");
@@ -569,9 +596,30 @@ export class SlackAdapter implements IngestionAdapter {
       const blocks = payload.blocks as Parameters<typeof fromBlocks>[0];
       const rawTs = this.asString(payload.ts);
       const slackTs = this.resolveMessageTs(rawTs ?? this.asString(payload.thread_ts));
+
+      let domCaptured: {
+        text?: string;
+        channelName?: string | null;
+        channelId?: string | null;
+      } | null = null;
+      if (channelId) {
+        await this.captureDomCandidate({
+          channelId,
+          ts: slackTs,
+          normalizedTs: this.normalizedTimestamp(slackTs) ?? slackTs,
+        });
+        domCaptured = this.consumeDomCapture(slackTs);
+        if (domCaptured?.channelId && domCaptured.channelName) {
+          this.cacheChannelName(domCaptured.channelId, domCaptured.channelName);
+        }
+      }
+
+      const channelNameHint =
+        domCaptured?.channelName ?? this.resolveChannelName(channelId) ?? channelId;
+
       const event = normalizeSlackMessage(
         {
-          channel: { id: channelId, name: channelId },
+          channel: { id: channelId, name: channelNameHint },
           user: { id: userId ?? "unknown", name: userId },
           ts: slackTs,
           text: payload.text as string | undefined,
@@ -581,18 +629,27 @@ export class SlackAdapter implements IngestionAdapter {
         },
         normalizeOpts
       );
+
+      if (channelId && channelNameHint) {
+        this.cacheChannelName(channelId, channelNameHint);
+      }
+
       if (channelId) {
+        const textFromDom = domCaptured?.text ?? undefined;
+        const fallbackText = (payload.text as string | undefined) ?? fromBlocks(blocks);
+        const resolvedText = textFromDom ?? fallbackText;
         this.cacheMessage(channelId, slackTs, {
-          text: (payload.text as string | undefined) ?? fromBlocks(blocks),
+          text: resolvedText,
           user: userId,
         });
         if (rawTs && rawTs !== slackTs) {
           this.cacheMessage(channelId, rawTs, {
-            text: (payload.text as string | undefined) ?? fromBlocks(blocks),
+            text: resolvedText,
             user: userId,
           });
         }
       }
+
       return [event];
     }
 
@@ -637,6 +694,10 @@ export class SlackAdapter implements IngestionAdapter {
       if (domCaptured?.text) {
         this.cacheMessage(channelId, itemTsForEvent, { text: domCaptured.text });
       }
+      const domChannelId = domCaptured?.channelId ?? channelId;
+      if (domChannelId && domCaptured?.channelName) {
+        this.cacheChannelName(domChannelId, domCaptured.channelName);
+      }
 
       const lookupKeys = [rawItemTs, normalizedItemTs, fallbackItemTs]
         .filter((value): value is string => Boolean(value))
@@ -647,12 +708,16 @@ export class SlackAdapter implements IngestionAdapter {
       const messageText =
         domCaptured?.text ?? cached?.text ?? this.asString(payload.message_text) ?? undefined;
       const messageUser = cached?.user ?? this.asString(payload.message_user) ?? undefined;
-      const channelName = domCaptured?.channelName ?? channelId;
+      const resolvedChannelName =
+        this.resolveChannelName(domChannelId) ?? domCaptured?.channelName ?? channelId;
+      if (domChannelId && resolvedChannelName) {
+        this.cacheChannelName(domChannelId, resolvedChannelName);
+      }
       const userIdForEvent = cached?.user ?? userId;
 
       const reactionEvent = normalizeSlackReaction(
         {
-          channel: { id: channelId, name: channelName },
+          channel: { id: channelId, name: resolvedChannelName },
           user: {
             id: userIdForEvent,
             name: messageUser ?? userIdForEvent,
@@ -789,19 +854,29 @@ export class SlackAdapter implements IngestionAdapter {
       if (!text) continue;
       this.storeDomCapture(
         candidate,
-        { text, channelName: outcome.channelName, matchedTs: outcome.matchedTs },
+        {
+          text,
+          channelName: outcome.channelName ?? channelId,
+          channelId: outcome.channelId ?? channelId,
+          matchedTs: outcome.matchedTs,
+        },
         tsVariants
       );
-      if (channelId) {
-        this.cacheMessage(channelId, normalizedTs, { text });
+      const channelKey = outcome.channelId ?? channelId ?? null;
+      const channelLabel =
+        outcome.channelName ?? (channelKey ? (this.resolveChannelName(channelKey) ?? null) : null);
+      if (channelKey && channelLabel) {
+        this.cacheChannelName(channelKey, channelLabel);
+      }
+      if (channelKey) {
+        this.cacheMessage(channelKey, normalizedTs, { text });
       }
       const excerpt = this.toExcerpt(text);
-      const channelLabel = channelId ?? outcome.channelName ?? null;
       console.log(
         JSON.stringify({
           ok: true,
           ts: normalizedTs,
-          channel: channelLabel,
+          channel: channelLabel ?? channelKey,
           excerpt,
         })
       );
@@ -905,12 +980,18 @@ export class SlackAdapter implements IngestionAdapter {
 
   private storeDomCapture(
     candidate: ReactionDomCandidate,
-    data: { text: string; channelName?: string | null; matchedTs?: string[] },
+    data: {
+      text: string;
+      channelName?: string | null;
+      channelId?: string | null;
+      matchedTs?: string[];
+    },
     variants: string[]
   ): void {
     const entry = {
       text: data.text,
       channelName: data.channelName ?? null,
+      channelId: data.channelId ?? null,
       capturedAt: Date.now(),
     };
     const keys = new Set<string>();
@@ -932,13 +1013,18 @@ export class SlackAdapter implements IngestionAdapter {
 
   private consumeDomCapture(
     ts: string | undefined
-  ): { text?: string; channelName?: string | null } | null {
+  ): { text?: string; channelName?: string | null; channelId?: string | null } | null {
     if (!ts) return null;
     const normalized = this.normalizedTimestamp(ts);
     const keys = new Set<string>();
     keys.add(ts);
     if (normalized) keys.add(normalized);
-    let entry: { text: string; channelName?: string | null; capturedAt: number } | null = null;
+    let entry: {
+      text: string;
+      channelName?: string | null;
+      channelId?: string | null;
+      capturedAt: number;
+    } | null = null;
     for (const key of keys) {
       const stored = this.domCaptureByTs.get(key);
       if (stored) entry = stored;
@@ -950,6 +1036,7 @@ export class SlackAdapter implements IngestionAdapter {
     return {
       text: entry.text,
       channelName: entry.channelName ?? undefined,
+      channelId: entry.channelId ?? undefined,
     };
   }
 
@@ -1015,6 +1102,26 @@ export class SlackAdapter implements IngestionAdapter {
       text: value.text ?? undefined,
       user: value.user ?? undefined,
     });
+  }
+
+  private cacheChannelName(channelId: string, label?: string | null): void {
+    const normalizedId = channelId?.trim();
+    const normalizedLabel = label?.trim();
+    if (!normalizedId || !normalizedLabel) {
+      return;
+    }
+    if (normalizedLabel === normalizedId) {
+      return;
+    }
+    this.channelNames.set(normalizedId, normalizedLabel);
+  }
+
+  private resolveChannelName(channelId: string | null | undefined): string | undefined {
+    const normalizedId = channelId?.trim();
+    if (!normalizedId) {
+      return undefined;
+    }
+    return this.channelNames.get(normalizedId);
   }
 
   private cacheKey(channel: string, ts: string): string {

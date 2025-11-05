@@ -135,7 +135,9 @@ async function registerWatchers(options: RegisterOptions): Promise<() => void> {
       return;
     }
     const entries = await safeReaddir(dayDir);
-    const existing = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name));
+    const existing = new Set(
+      entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+    );
     await Promise.all(
       Array.from(existing)
         .filter((name) => !sourceWatchers.has(name) && name !== "summaries")
@@ -251,25 +253,18 @@ async function safeReaddir(path: string) {
   }
 }
 
-async function directoryExists(path: string): Promise<boolean> {
-  try {
-    const stat = await fs.stat(path);
-    return stat.isDirectory();
-  } catch (error) {
-    if (isNotFoundError(error)) {
-      return false;
-    }
-    throw error;
-  }
-}
-
 function resolveDayDir(dataDir: string, date: string): string {
   const [year, month, day] = date.split("-");
   return join(dataDir, year, month, day);
 }
 
 function isNotFoundError(error: unknown): error is NodeJS.ErrnoException {
-  return Boolean(error) && typeof error === "object" && "code" in error && error.code === "ENOENT";
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
 
 async function touch(filePath: string): Promise<void> {
@@ -283,7 +278,10 @@ async function touch(filePath: string): Promise<void> {
   }
 }
 
-async function collectInitialCounts(dayDir: string, entries: Dirent[]): Promise<Map<string, number>> {
+async function collectInitialCounts(
+  dayDir: string,
+  entries: Dirent[]
+): Promise<Map<string, number>> {
   const result = new Map<string, number>();
   await Promise.all(
     entries

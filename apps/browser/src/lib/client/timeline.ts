@@ -1,10 +1,7 @@
 import type { TimelineEvent } from "$lib/server/types";
 import type { DaySourceOption } from "$lib/viewModels/day";
 
-export function insertEvent(
-  list: TimelineEvent[],
-  incoming: TimelineEvent
-): TimelineEvent[] {
+export function insertEvent(list: TimelineEvent[], incoming: TimelineEvent): TimelineEvent[] {
   if (list.some((event) => event.uid === incoming.uid)) {
     return list;
   }
@@ -13,10 +10,7 @@ export function insertEvent(
   return next;
 }
 
-export function computeLastTimestamp(
-  list: TimelineEvent[],
-  fallbackDate: string
-): string {
+export function computeLastTimestamp(list: TimelineEvent[], fallbackDate: string): string {
   if (list.length === 0) {
     return `${fallbackDate}T00:00:00`;
   }

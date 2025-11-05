@@ -61,7 +61,9 @@
     cursor: pointer;
     background: rgba(249, 250, 251, 0.12);
     color: inherit;
-    transition: background 0.2s ease, transform 0.2s ease;
+    transition:
+      background 0.2s ease,
+      transform 0.2s ease;
   }
 
   button:hover {

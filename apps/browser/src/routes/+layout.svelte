@@ -67,8 +67,17 @@
     min-height: 100vh;
     background: var(--surface-body);
     color: var(--text-primary);
-    font-family: "Inter", "Noto Sans JP", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    transition: background 0.3s ease, color 0.3s ease;
+    font-family:
+      "Inter",
+      "Noto Sans JP",
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+    transition:
+      background 0.3s ease,
+      color 0.3s ease;
   }
 
   :global(a) {

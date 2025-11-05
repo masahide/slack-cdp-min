@@ -153,7 +153,6 @@ export async function waitForExpect(
   intervalMs = 25
 ): Promise<void> {
   const start = Date.now();
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       assertion();
