@@ -1,5 +1,6 @@
 import { readDailyEvents, readDailySummary } from "$lib/server/data";
-import { resolveDataDir } from "$lib/server/config";
+import { resolveDataDir, resolveSlackWorkspaceBaseUrl } from "$lib/server/config";
+import { loadClipboardTemplate } from "$lib/server/clipboardTemplate";
 import type { TimelineEvent } from "$lib/server/types";
 import type { DayPageData, DaySourceOption } from "$lib/viewModels/day";
 
@@ -14,13 +15,20 @@ export const load: PageServerLoad = async (event) => {
       events: [],
       summary: null,
       sources: [],
+      clipboardTemplate: {
+        source: "",
+        origin: "default",
+      },
+      slackWorkspaceBaseUrl: resolveSlackWorkspaceBaseUrl(),
     } satisfies DayPageData;
   }
 
   const dataDir = resolveDataDir();
-  const [eventsResult, summary] = await Promise.all([
+  const slackWorkspaceBaseUrl = resolveSlackWorkspaceBaseUrl();
+  const [eventsResult, summary, template] = await Promise.all([
     readDailyEvents({ dataDir, date }),
     readDailySummary({ dataDir, date }),
+    loadClipboardTemplate(),
   ]);
 
   const sourceCounts = eventsResult.bySource;
@@ -41,6 +49,11 @@ export const load: PageServerLoad = async (event) => {
     events: filteredEvents,
     summary,
     sources,
+    clipboardTemplate: {
+      source: template.source,
+      origin: template.origin,
+    },
+    slackWorkspaceBaseUrl,
   } satisfies DayPageData;
 };
 

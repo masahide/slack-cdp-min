@@ -2,8 +2,7 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 
 import { readDailyEvents, readDailySummary } from "$lib/server/data";
-import { resolveDataDir, resolveHealthEndpoint } from "$lib/server/config";
-import { fetchHealthStatus } from "$lib/server/health";
+import { resolveDataDir } from "$lib/server/config";
 import type { DashboardDay, DashboardLoadData } from "$lib/viewModels/dashboard";
 
 import type { PageServerLoad } from "./$types";
@@ -14,7 +13,6 @@ const MAX_DAYS = 7;
 export const load: PageServerLoad = async (event) => {
   event.depends?.("reaclog:dashboard");
   const dataDir = resolveDataDir();
-  const healthPromise = fetchHealthStatus(event.fetch, resolveHealthEndpoint());
   const availableDates = await listAvailableDates(dataDir);
   const targetDates = availableDates.slice(0, MAX_DAYS);
 
@@ -44,11 +42,8 @@ export const load: PageServerLoad = async (event) => {
     })
   );
 
-  const health = await healthPromise;
-
   return {
     days,
-    health,
     generatedAt: new Date().toISOString(),
   } satisfies DashboardLoadData;
 };

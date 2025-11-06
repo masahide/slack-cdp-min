@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
 
 import type { DashboardLoadData } from "$lib/viewModels/dashboard";
 import type { DayPageData } from "$lib/viewModels/day";
@@ -14,13 +15,13 @@ describe("End-to-end data flow", () => {
   let dataDir: string;
   let fixture: JsonlFixture;
   const originalDataDir = process.env.REACLOG_DATA_DIR;
-  const originalHealth = process.env.REACLOG_HEALTH_ENDPOINT;
+  const originalConfigDir = process.env.REACLOG_CONFIG_DIR;
 
   beforeEach(async () => {
     fixture = await createJsonlFixture({ source: "slack", date: "2025-11-03" });
     dataDir = fixture.dataDir;
     process.env.REACLOG_DATA_DIR = dataDir;
-    process.env.REACLOG_HEALTH_ENDPOINT = "http://localhost:8799/health";
+    process.env.REACLOG_CONFIG_DIR = join(dataDir, "config");
     resetConfigCache();
     await seedDataset();
   });
@@ -34,32 +35,24 @@ describe("End-to-end data flow", () => {
       delete process.env.REACLOG_DATA_DIR;
     }
 
-    if (originalHealth) {
-      process.env.REACLOG_HEALTH_ENDPOINT = originalHealth;
+    if (originalConfigDir) {
+      process.env.REACLOG_CONFIG_DIR = originalConfigDir;
     } else {
-      delete process.env.REACLOG_HEALTH_ENDPOINT;
+      delete process.env.REACLOG_CONFIG_DIR;
     }
   });
 
   it("ダッシュボードから日次詳細、生データまで一連のロードが成功する", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ status: "ok", message: "All systems" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    );
-
     const dashboard = (await dashboardLoad({
       depends: vi.fn(),
       locals: {},
       params: {},
       url: new URL("http://example.test/"),
-      fetch: fetchMock,
+      fetch: vi.fn(),
       setHeaders: vi.fn(),
     } as never)) as DashboardLoadData;
 
     expect(dashboard.days[0]).toMatchObject({ date: "2025-11-03", total: 2 });
-    expect(dashboard.health?.status).toBe("ok");
 
     const day = (await dayLoad({
       depends: vi.fn(),

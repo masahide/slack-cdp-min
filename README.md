@@ -70,13 +70,13 @@ pnpm --filter browser preview -- --host 0.0.0.0 --port 4173
 
 `REACLOG_DATA_DIR` などの環境変数は通常どおり `pnpm --filter browser dev` の前に指定するか、`.env` に記述して読み込ませます。
 
-- ダッシュボード：最新 7 日分のイベント件数と Slack/GitHub/その他ソース別の内訳、CDP ヘルスステータス
+- ダッシュボード：最新 7 日分のイベント件数と Slack/GitHub/その他ソース別の内訳
 - 日付別ページ：フィルタ付きタイムライン、Markdown サマリ、原文 JSONL へのリンク、リアルタイムストリーム（JSONL 追記は数秒以内に反映）
 - テーマ切替：ライト/ダーク/システムの 3 モードを UI から切り替え。ブラウザの `prefers-color-scheme` と同期し、コントラスト AA 以上を維持
 - メッセージ表示：Slack の Markdown 記法（`*bold*` や `> quote` など）を HTML として再現し、リアクションは元メッセージのプレビュー付きで表示
 - Raw ビュー：日付ごとの JSONL をそのまま表示（デバッグ用）
 
-環境変数 `REACLOG_DATA_DIR` で参照するデータディレクトリを指定できます。CDP 収集プロセスと連携する場合は `REACLOG_HEALTH_ENDPOINT`（例: `http://localhost:3487/health`）を指定すると、ダッシュボード右上にステータスが表示されます。
+環境変数 `REACLOG_DATA_DIR` で参照するデータディレクトリを指定できます。
 
 テストは以下の通りです。
 

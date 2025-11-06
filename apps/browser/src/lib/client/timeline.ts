@@ -60,7 +60,7 @@ function compareEvents(a: TimelineEvent, b: TimelineEvent): number {
 }
 
 function getTimestamp(event: TimelineEvent): number {
-  const value = event.ts ?? event.loggedAt;
+  const value = event.loggedAt ?? event.ts;
   if (!value) {
     return Number.MAX_SAFE_INTEGER;
   }

@@ -151,7 +151,7 @@ export function normalizeEvent(
 }
 
 function timestampOf(event: TimelineEvent): number {
-  const tsValue = event.ts ?? event.loggedAt;
+  const tsValue = event.loggedAt ?? event.ts;
   if (!tsValue) {
     return Number.MAX_SAFE_INTEGER;
   }

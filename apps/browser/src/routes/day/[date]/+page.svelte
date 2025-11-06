@@ -1,6 +1,13 @@
 <script lang="ts">
   import MarkdownViewer from "$lib/components/MarkdownViewer.svelte";
-  import { formatIsoDate, formatIsoTimestamp, formatEventTime } from "$lib/format/date";
+  import AppHeader from "$lib/components/AppHeader.svelte";
+  import ThemeSwitcher from "$lib/components/ThemeSwitcher.svelte";
+  import {
+    formatIsoDate,
+    formatIsoTimestamp,
+    formatEventTime,
+    formatEventTimestampJstIso,
+  } from "$lib/format/date";
   import type { PageData } from "./$types";
   import type { TimelineEvent } from "$lib/server/types";
   import { writable, derived, get } from "svelte/store";
@@ -15,7 +22,6 @@
     parseTimelineEvent,
   } from "$lib/client/timeline";
   import UpdateToast from "$lib/components/UpdateToast.svelte";
-  import { themeController, type ThemeMode } from "$lib/client/theme";
   import {
     classifyEventKind,
     getEventChannelLabel,
@@ -24,20 +30,13 @@
     type EventPresentation,
     type EventKind,
   } from "$lib/presentation/event";
+  import { resolveSlackPermalink } from "$lib/presentation/slack";
   import { buildClipboardPayload } from "$lib/presentation/clipboard";
-  import { copyToClipboard, PROMPT_HEADER } from "$lib/client/copy";
+  import { copyToClipboard } from "$lib/client/copy";
 
   export let data: PageData;
 
   const dateLabel = formatIsoDate(data.date);
-
-  const themeMode = themeController.mode;
-
-  const themeOptions: Array<{ value: ThemeMode; label: string }> = [
-    { value: "light", label: "ライト" },
-    { value: "dark", label: "ダーク" },
-    { value: "system", label: "システム" },
-  ];
 
   const events = writable([...data.events]);
   const sourcesStore = writable([...data.sources]);
@@ -52,7 +51,7 @@
     return all.filter((event) => allowed.has(event.source));
   });
   const clipboardPayload = derived(events, (all) =>
-    buildClipboardPayload(data.date, all, data.summary ?? undefined)
+    buildClipboardPayload(data.date, all, data.summary ?? undefined, data.clipboardTemplate.source)
   );
 
   let lastUpdated = formatIsoTimestamp(computeLastTimestamp(data.events, data.date));
@@ -135,6 +134,7 @@
   const presentationCache = new Map<string, EventPresentation>();
   let copyFeedback: "success" | "error" | null = null;
   let copyTimer: ReturnType<typeof setTimeout> | null = null;
+  const slackWorkspaceBaseUrl = data.slackWorkspaceBaseUrl;
 
   const displayBadge = (event: TimelineEvent) => {
     const kind = classifyEventKind(event);
@@ -164,20 +164,11 @@
 
   const isSelected = (name: string, selection: string[]) => selection.includes(name);
 
-  const handleThemeChange = (event: Event) => {
-    const value = (event.currentTarget as HTMLSelectElement).value as ThemeMode;
-    themeController.setTheme(value);
-  };
-
-  const toggleTheme = () => {
-    themeController.toggle();
-  };
-
   const handleCopyAll = async () => {
     if (!browser) {
       return;
     }
-    const text = `${PROMPT_HEADER}\n\n${get(clipboardPayload)}`;
+    const text = get(clipboardPayload);
     try {
       await copyToClipboard(text);
       setCopyFeedback("success");
@@ -304,6 +295,9 @@
     await pollEvents();
     toastVisible.set(false);
   };
+
+  const slackPermalink = (event: TimelineEvent) =>
+    resolveSlackPermalink(event, slackWorkspaceBaseUrl);
 </script>
 
 <svelte:head>
@@ -311,36 +305,33 @@
 </svelte:head>
 
 <main class="layout">
-  <header class="page-header">
-    <div class="header-main">
+  <AppHeader>
+    <svelte:fragment slot="main">
       <a class="back-link" href="/">← ダッシュボードに戻る</a>
       <h1>{dateLabel} のログ</h1>
       <p class="updated-at">最終記録: {lastUpdated}</p>
-    </div>
-    <div class="header-actions">
-      <div class="theme-controls">
-        <label class="theme-label" for="theme-select">テーマ</label>
-        <select id="theme-select" bind:value={$themeMode} on:change={handleThemeChange}>
-          {#each themeOptions as option}
-            <option value={option.value}>
-              {option.label}
-            </option>
-          {/each}
-        </select>
-        <button type="button" class="theme-toggle" on:click={toggleTheme}>切替</button>
-      </div>
+    </svelte:fragment>
+    <svelte:fragment slot="actions">
+      <ThemeSwitcher selectId="timeline-theme" />
       <div class="clipboard-controls">
         <button type="button" class="clipboard-button" on:click={handleCopyAll}>
           LLM 用にコピー
         </button>
+        <a class="settings-link" href="/settings">テンプレート編集</a>
+        <span
+          class:custom-template={data.clipboardTemplate.origin === "custom"}
+          class="template-indicator"
+        >
+          {data.clipboardTemplate.origin === "custom" ? "カスタム適用中" : "デフォルト使用"}
+        </span>
         {#if copyFeedback === "success"}
           <span class="clipboard-status success">コピーしました</span>
         {:else if copyFeedback === "error"}
           <span class="clipboard-status error">コピーできませんでした</span>
         {/if}
       </div>
-    </div>
-  </header>
+    </svelte:fragment>
+  </AppHeader>
 
   <section class="filters">
     <h2>ソースフィルタ</h2>
@@ -373,8 +364,9 @@
       {:else}
         <ul>
           {#each $filteredEvents as event}
+            {@const permalink = slackPermalink(event)}
             <li class="timeline-item">
-              <div class="time">{formatEventTime(event.ts, data.date)}</div>
+              <div class="time">{formatEventTime(event.loggedAt ?? event.ts, data.date)}</div>
               <div class="body">
                 <div class="meta-line">
                   <span class={`source-tag kind-${classifyEventKind(event)}`}>
@@ -382,6 +374,21 @@
                   </span>
                   {#if getEventChannelLabel(event)}
                     <span class="channel-tag">{getEventChannelLabel(event)}</span>
+                  {/if}
+                  {#if event.ts}
+                    <time class="timestamp original" datetime={event.ts}>
+                      投稿 {formatEventTimestampJstIso(event.ts, data.date)}
+                    </time>
+                  {/if}
+                  {#if permalink}
+                    <a
+                      class="timeline-permalink"
+                      href={permalink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Slackで開く
+                    </a>
                   {/if}
                 </div>
                 <div class="description" aria-label={`本文: ${describeEvent(event)}`}>
@@ -424,25 +431,6 @@
     margin: 0 auto;
   }
 
-  .page-header {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-  }
-
-  @media (min-width: 768px) {
-    .page-header {
-      flex-direction: row;
-      align-items: center;
-      justify-content: space-between;
-    }
-  }
-
-  .page-header h1 {
-    margin-top: 0.5rem;
-    color: var(--text-primary);
-  }
-
   .back-link {
     color: var(--accent);
     font-size: 0.9rem;
@@ -457,59 +445,6 @@
     margin-top: 0.25rem;
     font-size: 0.85rem;
     color: var(--text-secondary);
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .theme-label {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-  }
-
-  .theme-controls {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  select {
-    border-radius: 999px;
-    border: 1px solid var(--surface-border-strong);
-    background: var(--surface-card);
-    color: var(--text-primary);
-    padding: 0.35rem 0.9rem;
-    font-size: 0.85rem;
-    appearance: none;
-  }
-
-  select:focus {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  .theme-toggle {
-    border: none;
-    background: var(--button-muted-bg);
-    color: var(--button-muted-text);
-    border-radius: 999px;
-    padding: 0.35rem 0.8rem;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition:
-      background 0.2s ease,
-      transform 0.2s ease;
-  }
-
-  .theme-toggle:hover {
-    background: var(--accent);
-    color: #fff;
-    transform: translateY(-1px);
   }
 
   .clipboard-controls {
@@ -547,6 +482,25 @@
 
   .clipboard-status.error {
     color: #ef4444;
+  }
+
+  .settings-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .template-indicator {
+    font-size: 0.78rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    background: var(--button-muted-bg);
+    color: var(--button-muted-text);
+  }
+
+  .template-indicator.custom-template {
+    background: rgba(249, 115, 22, 0.2);
+    color: #f97316;
   }
 
   .filters {
@@ -592,7 +546,7 @@
 
   @media (min-width: 960px) {
     .content {
-      grid-template-columns: 2fr 1fr;
+      grid-template-columns: 5fr 2fr;
     }
   }
 
@@ -607,7 +561,7 @@
 
   .timeline-item {
     display: grid;
-    grid-template-columns: 90px 1fr;
+    grid-template-columns: 80px 1fr;
     gap: 1rem;
     align-items: start;
   }
@@ -631,6 +585,12 @@
     gap: 0.5rem;
     flex-wrap: wrap;
     margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+
+  .timestamp {
+    white-space: nowrap;
   }
 
   .source-tag {
@@ -682,6 +642,16 @@
   :global([data-theme="dark"]) .channel-tag {
     background: rgba(148, 163, 184, 0.22);
     color: #cbd5f5;
+  }
+
+  .timeline-permalink {
+    font-size: 0.75rem;
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .timeline-permalink:hover {
+    text-decoration: underline;
   }
 
   .description {

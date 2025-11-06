@@ -14,13 +14,11 @@ function writeJsonl(filePath: string, events: Array<Record<string, unknown>>) {
 describe("routes/+page.server load", () => {
   let dataDir: string;
   const cleanupEnv: string | undefined = process.env.REACLOG_DATA_DIR;
-  const cleanupHealth: string | undefined = process.env.REACLOG_HEALTH_ENDPOINT;
 
   beforeEach(() => {
     resetConfigCache();
     dataDir = mkdtempSync(join(tmpdir(), "reaclog-dashboard-"));
     process.env.REACLOG_DATA_DIR = dataDir;
-    delete process.env.REACLOG_HEALTH_ENDPOINT;
 
     createDay("2025-11-03", {
       slack: [
@@ -84,12 +82,6 @@ describe("routes/+page.server load", () => {
     } else {
       process.env.REACLOG_DATA_DIR = cleanupEnv;
     }
-
-    if (cleanupHealth === undefined) {
-      delete process.env.REACLOG_HEALTH_ENDPOINT;
-    } else {
-      process.env.REACLOG_HEALTH_ENDPOINT = cleanupHealth;
-    }
   });
 
   it("最新日から順にサマリカード用データを返す", async () => {
@@ -116,42 +108,6 @@ describe("routes/+page.server load", () => {
     );
     expect(result.days[0].summaryPreview).toContain("# 11/03");
     expect(result.generatedAt).toMatch(/T/);
-    expect(result.health).toBeNull();
-  });
-
-  it("ヘルスエンドポイントのレスポンスを反映する", async () => {
-    process.env.REACLOG_HEALTH_ENDPOINT = "http://health.test/status";
-    resetConfigCache();
-
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          status: "ok",
-          message: "Connected",
-          updatedAt: "2025-11-03T10:00:00Z",
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }
-      )
-    );
-
-    const result = (await load({
-      depends: vi.fn(),
-      locals: {},
-      params: {},
-      url: new URL("http://example.test/"),
-      fetch: fetchMock,
-      setHeaders: vi.fn(),
-    } as never)) as DashboardLoadData;
-
-    expect(fetchMock).toHaveBeenCalledWith("http://health.test/status", expect.any(Object));
-    expect(result.health).toEqual({
-      status: "ok",
-      message: "Connected",
-      updatedAt: "2025-11-03T10:00:00Z",
-    });
   });
 
   function createDay(

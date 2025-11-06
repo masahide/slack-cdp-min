@@ -19,6 +19,7 @@
     "vitest": "^2.1.6"
   },
   "dependencies": {
+    "handlebars": "^4.7.8",
     "marked": "^12.0.2"
   }
 }

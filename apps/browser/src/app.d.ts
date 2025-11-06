@@ -1,3 +1,8 @@
+declare module "*.hbs?raw" {
+  const template: string;
+  export default template;
+}
+
 // See https://kit.svelte.dev/docs/types#app
 declare global {
   namespace App {

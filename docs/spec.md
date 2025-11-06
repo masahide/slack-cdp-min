@@ -1,26 +1,32 @@
-# ReacLog 仕様書 v0.1（マルチソース作業ログ基盤）
+# ReacLog 仕様書 v0.1（シングルソース実装 + ロードマップ）
 
-> 目的：Slack の投稿/リアクションに加え、GitHub（クラウド）やローカル Git（Linux 等）の変更・コメント・差分を**軽量に収集**し、**日次の作業ログ**を LLM で自動要約する。
+> 現状：Slack の投稿/リアクションを CDP で収集し、日付ごとの JSONL とビューア（SvelteKit）で参照できるようにする。将来的には GitHub やローカル Git を統合し、LLM 要約まで拡張する。
 
 ---
 
-## 0. スコープ & 非スコープ
+## 0. スコープ & ロードマップ
 
-- **スコープ**：
-  - Slack（CDP経由）での `chat.postMessage` / `reactions.add|remove` の収集
-  - GitHub イベント（PR/Issue/コメント/レビュー等）の収集（最小はポーリング）
-  - ローカル Git フック（commit/push/merge）の収集
-  - 共通イベントへの正規化、SQLite 保存、FTS 検索
-  - **JST基準の日次サマリ**（Markdown）の生成
+- **現在実装済み（v0.1 時点）**：
+  - Slack（CDP 経由）の `chat.postMessage` / `reactions.add|remove` を正規化して JSONL へ追記
+  - JSONL を読み込む SvelteKit 製ビューア
+    - ダッシュボード（日次集計）、日別タイムライン、RAW ビュー
+    - Slack イベント用パーマリンク生成（`REACLOG_SLACK_WORKSPACE` 系の環境変数が必須）
+  - クリップボードテンプレート（Handlebars）と UI での編集
+  - SSE ベースのリアルタイム反映（`/day/<date>/stream`）
+
+- **今後の予定（ロードマップ）**：
+  - GitHub イベント（PR/Issue/コメント/レビュー）の取り込み
+  - ローカル Git hooks からのコミット連携
+  - JSONL から MD-Record v1 を生成する要約バッチと LLM プロンプト
+  - SQLite / FTS を利用した検索・集約の検討
 
 - **非スコープ（v0.1）**：
-  - チーム全体の統合監査（個人用途に限定）
-  - 完全なPIIマスキング・高度な権限統制（将来版で検討）
-  - GitHub App + Webhook の本格運用（v0.2以降）
+  - 組織全体監査や権限管理など、個人用途を超える運用
+  - 高度な PII マスキング
 
 ---
 
-## 1. 全体アーキテクチャ
+## 1. 全体アーキテクチャ（現状と拡張案）
 
 ```mermaid
 flowchart TB
@@ -37,10 +43,13 @@ flowchart TB
   end
   subgraph Storage["3. Storage (Filesystem JSONL, daily partition)"]
   end
-  subgraph Summarizer["4. Summarizer (LLM)"]
+  subgraph Summarizer["4. Summarizer (LLM, planned)"]
   end
 
   S --> Ingestion
+  style G stroke-dasharray: 4 4
+  style L stroke-dasharray: 4 4
+  style O stroke-dasharray: 4 4
   G --> Ingestion
   L --> Ingestion
   O --> Ingestion
@@ -49,9 +58,9 @@ flowchart TB
 
 **設計原則**
 
-- 収集は**薄いアダプタ**に閉じる（環境依存を局所化）。
+- 現状は Slack アダプタのみが動作。GitHub / Git は将来追加する。
 - 保存は **日付×ソースの JSONL 追記**でシンプル運用（SQL 依存なし）。
-- LLM には **Markdown レコード（MD‑Record v1）**を渡す（本文は常にコードフェンス）。
+- 将来的に LLM 要約を行う場合は **Markdown レコード（MD‑Record v1）**を想定。
 
 ---
 
@@ -201,6 +210,8 @@ flowchart TB
 
 ### 2.3 LLM 投入用テキスト（MD‑Record v1）
 
+> **ステータス**：未実装（要約ジョブ追加時に本仕様を採用予定）
+
 - **目的**：JSONL を LLM が読みやすい Markdown に一時レンダリング。
 - **レコード区切り**：単独行の `---`
 - **ヘッダ行（1行）**：
@@ -316,6 +327,8 @@ feat: add multipart parser
 
 ## 3. 収集アダプタ（Adapters）
 
+> Slack アダプタのみ実装済み。GitHub / Git-local は本仕様をベースに今後実装する。
+
 ### 3.1 共通 IF（コア＋ネスト詳細）
 
 ```ts
@@ -384,7 +397,7 @@ export interface IngestionAdapter {
   - DOM キャプチャの成功時に得た本文をキャッシュし、同メッセージの後続リアクションでも再利用する
   - DOM キャプチャを無効化した場合は本文が空文字／`undefined` になる前提（フォールバック無し）
 
-### 3.3 GitHub（最小：Polling / 将来：App+Webhook）
+### 3.3 GitHub（最小：Polling / 将来：App+Webhook）※未実装
 
 - **最小実装**：PAT + Octokit で `repos[]` を 5–10 分間隔でポーリング
   - PR/Issue/コメント/レビューの**最新 N 件**を取得
@@ -393,14 +406,16 @@ export interface IngestionAdapter {
 - **差分**：必要に応じて `GET /pulls/{number}/files` の `patch` をトリムして `diff` に
 - **将来**：GitHub App + Webhook → 小型受信サーバ（Fastify/Express）へ
 
-### 3.4 Local Git（hooks）
+### 3.4 Local Git（hooks）※未実装
 
 - `.git/hooks/post-commit` 等で JSON を生成し、**UNIX ドメインソケット**（Windows は Named Pipe）へ送信
 - 受信側で `uid='git:{repo-path}#commit#{sha}'` として保存
 
 ---
 
-## 4. サマライザ（LLM）
+## 4. サマライザ（LLM／計画中）
+
+> 要約機能はまだ実装されていない。以下はバッチ実装時の設計メモとして維持する。
 
 ### 4.1 日次ジョブ（JST）
 
@@ -448,23 +463,27 @@ export interface IngestionAdapter {
 
 ## 5. 実行モデル & バッチ
 
-### 5.1 `pnpm start`（利用者向けワンコマンド）
+### 5.1 `pnpm start`（Slack 収集プロセス）
 
-- Slack デスクトップアプリ向け CDP 接続を確認しつつ、以下を **同時に** 起動する常駐コマンド。
-  1. **Slack Ingestor**：CDP から `events.jsonl` に追記。
-  2. **ブラウズ UI (SvelteKit)**：`http://localhost:4173`（デフォルト）で日次イベントを閲覧可能にする。ユーザーが即座に最新ログを確認できるよう、UI は開発者向けではなくエンドユーザー向けの情報設計（説明ラベル、検索/フィルタ）を提供。
-  3. **ヘルスチェック**：CDP 接続状態を 30 秒間隔で確認し、再接続や UI 上でのバナー表示につなげる。
-- `pnpm start -- --browser-port=4300 --data-dir=./data` のように、CLI オプションで UI ポートやデータディレクトリを上書き。
-- 起動失敗時（CDP へ接続できない等）は UI だけを起動し、ヘルスバナーに「Slack を開いてください」を表示する仕様とする。
-- トラブルシュート用途で `REACLOG_DISABLE_DOM_CAPTURE=1` を指定すると DOM キャプチャを停止できる（この場合、`message_text` は空のまま保存される想定）。
+- `tsx src/index.ts` を起動し、Slack デスクトップアプリ（`app.slack.com`）の CDP へ接続して JSONL に追記する常駐プロセス。
+- 環境変数 `REACLOG_DATA_DIR` で保存先、`CDP_HOST`/`CDP_PORT` で接続先を上書き可能。
+- `REACLOG_DISABLE_DOM_CAPTURE=1` を指定すると DOM キャプチャを停止（本文は空になる想定）。
+- `pnpm start` 自体は UI を立ち上げない。ビューアは別プロセスで起動する。
 
-### 5.2 CLI 拡張（将来）
+### 5.2 ビューア（apps/browser）
+
+- `pnpm --filter browser dev` で Vite の開発サーバーを起動し、`http://localhost:5173` からダッシュボード／タイムライン／RAW ビューにアクセスできる。
+- `REACLOG_DATA_DIR` を指定すると、閲覧対象の日付ディレクトリを切り替えられる。
+- Slack パーマリンクを有効にする場合は `REACLOG_SLACK_WORKSPACE` または `REACLOG_SLACK_WORKSPACE_URL` を設定する（例：`REACLOG_SLACK_WORKSPACE=example-team`）。
+- 本番確認時は `pnpm --filter browser build && pnpm --filter browser preview` を利用する。
+
+### 5.3 CLI 拡張（将来）
 
 - `reaclog summary --day 2025-11-03`：JSONL から日次要約を生成
 - `reaclog search --q "keyword"`：`rg` + `jq` で検索
 - `reaclog export --day 2025-11-03 --out daily-2025-11-03.md`
 
-### 5.3 スケジューリング
+### 5.4 スケジューリング（将来）
 
 - **Windows**：タスク スケジューラ
 - **Linux/macOS**：cron/systemd timer
@@ -477,11 +496,12 @@ export interface IngestionAdapter {
 
 Slack アダプタは環境変数で挙動を切り替えられる。
 
-| 変数                          | 例                             | 説明                                                                                                                                                        |
-| ----------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `REACLOG_DEBUG`               | `slack:verbose,slack:domprobe` | ドメイン別デバッグログ。`slack:verbose` で Slack アダプタの詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` 等でネットワークイベントを個別に有効化。 |
-| `REACLOG_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に無効化（フォールバックなし、`message_text` は空のまま）。トラブルシュート時のみ使用。                                                       |
-| `REACLOG_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                        |
+| 変数                                                      | 例                                                | 説明                                                                                                                                                        |
+| --------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `REACLOG_DEBUG`                                           | `slack:verbose,slack:domprobe`                    | ドメイン別デバッグログ。`slack:verbose` で Slack アダプタの詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` 等でネットワークイベントを個別に有効化。 |
+| `REACLOG_DISABLE_DOM_CAPTURE`                             | `1`                                               | DOM 取得を完全に無効化（フォールバックなし、`message_text` は空のまま）。トラブルシュート時のみ使用。                                                       |
+| `REACLOG_TZ`                                              | `Asia/Tokyo`                                      | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                        |
+| `REACLOG_SLACK_WORKSPACE` / `REACLOG_SLACK_WORKSPACE_URL` | `example-team` / `https://example-team.slack.com` | ビューアで Slack パーマリンクを生成する際のベース URL。チームスラッグまたはホスト名を指定する。設定が無い場合はリンクが非表示。                             |
 
 **起動例**
 
@@ -573,32 +593,25 @@ Slack 以外のソースを含む統合ログの確認には `/data/YY/MM/DD/<so
 
 ## 11. ブラウズ UI (SvelteKit)
 
-- **目的**：利用者が `events.jsonl` や日次サマリをブラウザで確認し、活動ログを自己レビューできるポータル。開発者向けではなく、業務ユーザーでも扱える導線（説明テキスト/状態表示）を備える。
-- **スタック**：SvelteKit + Vite（`pnpm` ワークスペース内 `apps/browser`）。CI/本番共通で `pnpm start` から連携起動される。
+- **目的**：`events.jsonl` や日次サマリをブラウザで確認し、作業ログを自己レビューできるポータルを提供する。
+- **スタック**：SvelteKit + Vite（`pnpm` ワークスペース内 `apps/browser`）。Slack 収集プロセスとは別コマンドで起動する。
 - **起動方法**：
-  - `pnpm start` により Slack Ingestor と同一プロセスで `pnpm --filter browser dev` 相当を立ち上げ、CDP 健康状態をトップページに表示。
-  - 単体起動も可能（`pnpm --filter browser dev` / `build` / `preview`）。
-- **データ取得**：
-  - `src/lib/server/data.ts` に JSONL/Markdown 読み込みラッパーを実装。`dataDir` は共通設定 (`reaclog.config.json` or env) から解決。
-  - ルーティング例：
-    - `/`：最新7日分のサマリカード（Slack/GitHub/Git別の件数メタ）。
-    - `/day/[yyyy-mm-dd]`：該当日の `slack/events.jsonl` 等を読み込み、タイムライン形式で表示。
-    - `/day/[yyyy-mm-dd]/raw`：JSONL をそのまま表示（開発者向け）。
-- **UI要件**：
-- クライアント描画は Svelte コンポーネント。`+page.server.ts` でデータを読み取り `Load` で渡す。
-- 日跨ぎナビゲーション（前日/翌日）とソースフィルタ（Slack/GitHub/Git）を提供。
-- 日次 Markdown サマリ（`summaries/daily.md`）がある場合は右カラムでレンダリング。
-- 利用者向けに CDP 接続ステータス、データ更新時刻、Slack 収集オン/オフ状態を UI で分かりやすく表示。
-- JSONL ファイルの追記を 1〜2 秒以内に検知し、ページ遷移なしで最新イベントをタイムラインへストリーム反映（`EventSource` もしくはファイル監視 → サーバープッシュ）。即時反映不可な場合も UI 上で「更新あり」のトーストを提示する。
-- システムのダークモード設定に追従しつつ、UI 内にライト/ダークの手動切り替えトグルを設置。Slack 配色に依存せず、タイムライン/カード/モーダルでコントラスト AA 以上を維持。
-- Slack メッセージ本文および添付コンテンツは Markdown 構文をサーバー側で HTML に整形し、インラインコード/引用/リスト等を正しく再現する（XSS サニタイズ必須）。
-- リアクション行では、対象メッセージの Markdown 変換済みプレビューを折りたたみ内で表示し、「誰が・どの投稿に反応したか」を視覚的に追跡可能にする。
-- **セキュリティ**：
-  - 初期版はローカルのみ (`0.0.0.0` で listen せず `localhost` 限定)。
-  - 将来的に Basic 認証やトークンゲートを `hooks.server.ts` で追加できる構造にする。
+  - 開発時：`pnpm --filter browser dev`
+  - 本番確認：`pnpm --filter browser build && pnpm --filter browser preview`
+  - データディレクトリは `REACLOG_DATA_DIR` で指定。
+- **主要画面**：
+  - `/`：直近 7 日のイベント件数サマリとソース別内訳。
+  - `/day/[yyyy-mm-dd]`：タイムライン表示（ソースフィルタ、Slack パーマリンク、リアルタイムストリーム、Markdown サマリ右カラム）。
+  - `/day/[yyyy-mm-dd]/raw`：JSONL をそのまま表示。
+- **タイムライン機能**：
+  - Slack 投稿/リアクションを HTML にレンダリング。ソースごとのタグ、リアクションタイプの表示、詳細 JSON の折りたたみ。
+  - `REACLOG_SLACK_WORKSPACE` 系が設定されていれば Slack へのパーマリンクを生成し、スレッド返信には `thread_ts`/`cid` クエリを付与。
+  - `EventSource` による JSONL 追記のストリーミングと、フォールバックポーリング + トースト通知。JSONL ファイルの追記を 1〜2 秒以内に検知してタイムラインへ反映する。
+  - テーマ切替（ライト/ダーク/システム）とコピー機能（Handlebars テンプレートを編集可能）。OS のダークモード設定に追従し、ユーザー手動の切替とも整合させる（ダークモード設定に追従）。
+  - Markdown 変換済みプレビューを右カラムで提示し、コピー時にも Markdown 変換済みプレビューを維持する。
+- **セキュリティ**：初期版はローカル利用を前提に `localhost` で Listen。将来の認証は `hooks.server.ts` で追加予定。
 - **テスト**：
-  - SvelteKit の `vitest` + `@sveltejs/kit/vite` テストを導入し、`dataDir` を tmp フォルダに向けたエンドツーエンド風テストを作成。
-  - `pnpm --filter browser test` をCI `qa` ジョブに連結。
-  - `pnpm start` の結合テストでは、モック CDP を用意し UI がヘルスステータスを受け取ることを検証。
+  - Vitest でサーバーロード／API のユニットテストを実施（`pnpm --filter browser test`）。
+  - `qa` スクリプトで型チェック／Lint／Vitest をまとめて走らせる。
 
 ---
