@@ -1,3 +1,4 @@
+import type { Dirent, Stats } from "node:fs";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 
@@ -10,35 +11,36 @@ import type {
 
 type ErrnoException = NodeJS.ErrnoException;
 
-const eventsCache = new Map<string, DailyEventsResult>();
+type EventsCacheEntry = {
+  version: string;
+  result: DailyEventsResult;
+};
+
+const eventsCache = new Map<string, EventsCacheEntry>();
 const summaryCache = new Map<string, string | null>();
 
 export async function readDailyEvents(options: ReadDailyEventsOptions): Promise<DailyEventsResult> {
   const { dataDir, date } = options;
   const cacheKey = createCacheKey(dataDir, date);
 
-  if (options.cache !== false && eventsCache.has(cacheKey)) {
-    return eventsCache.get(cacheKey)!;
-  }
-
   const { year, month, day } = splitDate(date);
   const dayRoot = join(dataDir, year, month, day);
+
+  const dirEntries = await safeReaddir(dayRoot);
+  const { fingerprint, sources } = await collectSourceMetadata(dayRoot, dirEntries);
+
+  if (options.cache !== false) {
+    const cached = eventsCache.get(cacheKey);
+    if (cached && cached.version === fingerprint) {
+      return cached.result;
+    }
+  }
 
   const events: TimelineEvent[] = [];
   const bySource: Record<string, number> = {};
 
-  const dirEntries = await safeReaddir(dayRoot);
   await Promise.all(
-    dirEntries.map(async (entry) => {
-      if (!entry.isDirectory()) {
-        return;
-      }
-      if (entry.name === "summaries") {
-        return;
-      }
-
-      const source = entry.name;
-      const jsonlPath = join(dayRoot, source, "events.jsonl");
+    sources.map(async ({ source, jsonlPath }) => {
       const parsedEvents = await readJsonlFile(jsonlPath);
 
       parsedEvents.forEach((raw) => {
@@ -60,7 +62,7 @@ export async function readDailyEvents(options: ReadDailyEventsOptions): Promise<
   const result: DailyEventsResult = { events, bySource };
 
   if (options.cache !== false) {
-    eventsCache.set(cacheKey, result);
+    eventsCache.set(cacheKey, { version: fingerprint, result });
   }
 
   return result;
@@ -96,6 +98,41 @@ export async function readDailySummary(options: ReadDailySummaryOptions): Promis
 function splitDate(date: string): { year: string; month: string; day: string } {
   const [year, month, day] = date.split("-");
   return { year, month, day };
+}
+
+type SourceDescriptor = {
+  source: string;
+  jsonlPath: string;
+};
+
+async function collectSourceMetadata(
+  dayRoot: string,
+  entries: Dirent[]
+): Promise<{ fingerprint: string; sources: SourceDescriptor[] }> {
+  const parts: string[] = [];
+  const sources: SourceDescriptor[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    if (entry.name === "summaries") {
+      continue;
+    }
+
+    const source = entry.name;
+    const jsonlPath = join(dayRoot, source, "events.jsonl");
+    const stats = await safeStat(jsonlPath);
+    if (stats) {
+      parts.push(`${source}:${stats.size}:${stats.mtimeMs}`);
+    } else {
+      parts.push(`${source}:missing`);
+    }
+    sources.push({ source, jsonlPath });
+  }
+
+  const fingerprint = parts.length > 0 ? parts.sort().join("|") : "@empty";
+  return { fingerprint, sources };
 }
 
 async function safeReaddir(path: string) {
@@ -163,6 +200,17 @@ function createSyntheticUid(raw: Record<string, unknown>): string {
   const detail = typeof raw.detail === "object" && raw.detail !== null ? raw.detail : {};
   const detailHash = JSON.stringify(detail).slice(0, 24);
   return `synthetic:${detailHash}`;
+}
+
+async function safeStat(path: string): Promise<Stats | null> {
+  try {
+    return await fs.stat(path);
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function isNotFoundError(error: unknown): error is ErrnoException {
