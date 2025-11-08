@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { createEventDispatcher, onDestroy, tick } from "svelte";
   import { createMarkdownPipeline } from "$lib/preview/markdownPipeline";
 
   export let markdown: string | null = null;
@@ -7,9 +7,22 @@
 
   const pipeline = createMarkdownPipeline({ debounce });
   let rendered: string | null = null;
+  let container: HTMLDivElement | null = null;
+  const dispatch = createEventDispatcher<{ ready: { element: HTMLDivElement | null } }>();
+  let lastEmitted: HTMLDivElement | null = null;
+
+  const notifyReady = async () => {
+    await tick();
+    const next = rendered ? container : null;
+    if (next !== lastEmitted) {
+      lastEmitted = next;
+      dispatch("ready", { element: next });
+    }
+  };
 
   const unsubscribe = pipeline.subscribe((value) => {
     rendered = value;
+    void notifyReady();
   });
 
   $: pipeline.update(markdown ?? null);
@@ -18,10 +31,16 @@
     unsubscribe();
     pipeline.destroy();
   });
+
+  export function getScrollableElement(): HTMLDivElement | null {
+    return container;
+  }
 </script>
 
 {#if rendered}
-  <div class="markdown" data-testid="markdown-preview">{@html rendered}</div>
+  <div class="markdown" data-testid="markdown-preview" bind:this={container}>
+    {@html rendered}
+  </div>
 {:else}
   <p class="placeholder">サマリがまだありません。</p>
 {/if}

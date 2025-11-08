@@ -12,7 +12,12 @@ export type SummaryEditorApiStubs = {
     (payload: { date: string; content: string }) => Promise<{ ok: boolean; savedAt: string }>
   >;
   requestSuggestion: Mock<
-    (payload: { model: string; content: string }) => Promise<{ delta: string }>
+    (payload: { model: string; content: string; previousResponseId?: string | null }) => Promise<{
+      summaryUpdate: { mode: "append" | "replace" | "none"; content: string };
+      assistantMessage: string;
+      reasoning: string | null;
+      responseId: string | null;
+    }>
   >;
 };
 
@@ -44,7 +49,10 @@ export function createSummaryEditorApiStubs(
   const requestSuggestion =
     overrides.requestSuggestion ??
     vi.fn().mockResolvedValue({
-      delta: "",
+      summaryUpdate: { mode: "none", content: "" },
+      assistantMessage: "[mock] suggestion",
+      reasoning: null,
+      responseId: "mock-response",
     });
 
   return {

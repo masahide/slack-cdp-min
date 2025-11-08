@@ -1,7 +1,11 @@
 import { vi } from "vitest";
 
 import type { SummaryDraftPayload } from "$lib/client/summary/api";
-import type { SummaryChatRequest, SummaryChatResponse } from "$lib/client/summary/chat";
+import type {
+  SummaryChatRequest,
+  SummarySuggestionResponse,
+  SummaryChatSelection,
+} from "$lib/client/summary/chat";
 
 type JsonResponse<T> = {
   status: number;
@@ -22,7 +26,7 @@ export type SummaryApiMock = {
   setLoadResponse(response: JsonResponse<SummaryDraftPayload>): void;
   setInitializeResponse(response: JsonResponse<SummaryDraftPayload>): void;
   setSaveResponse(response: JsonResponse<{ savedAt: string }>): void;
-  setSuggestionResponse(response: JsonResponse<SummaryChatResponse>): void;
+  setSuggestionResponse(response: JsonResponse<SummarySuggestionResponse>): void;
 };
 
 export function createSummaryApiMock(date: string): SummaryApiMock {
@@ -40,9 +44,14 @@ export function createSummaryApiMock(date: string): SummaryApiMock {
     status: 200,
     body: { savedAt: new Date().toISOString() },
   };
-  let suggestionResponse: JsonResponse<SummaryChatResponse> = {
+  let suggestionResponse: JsonResponse<SummarySuggestionResponse> = {
     status: 200,
-    body: { delta: "" },
+    body: {
+      summaryUpdate: { mode: "none", content: "" },
+      assistantMessage: "[mock] assistant message",
+      reasoning: null,
+      responseId: "mock-response",
+    },
   };
 
   let loadCount = 0;
@@ -77,6 +86,8 @@ export function createSummaryApiMock(date: string): SummaryApiMock {
         model: readString(payload, "model"),
         prompt: readString(payload, "prompt"),
         content: readString(payload, "content"),
+        previousResponseId: readOptionalString(payload, "previousResponseId"),
+        selection: parseSelection(payload.selection),
       });
       return buildResponse(suggestionResponse);
     }
@@ -119,7 +130,7 @@ export function createSummaryApiMock(date: string): SummaryApiMock {
     setSaveResponse(response: JsonResponse<{ savedAt: string }>) {
       saveResponse = response;
     },
-    setSuggestionResponse(response: JsonResponse<SummaryChatResponse>) {
+    setSuggestionResponse(response: JsonResponse<SummarySuggestionResponse>) {
       suggestionResponse = response;
     },
   };
@@ -185,6 +196,46 @@ async function parseJson(body: BodyInit | null | undefined): Promise<Record<stri
 function readString(input: Record<string, unknown>, key: string): string {
   const value = input[key];
   return typeof value === "string" ? value : "";
+}
+
+function readOptionalString(input: Record<string, unknown>, key: string): string | null {
+  const value = input[key];
+  return typeof value === "string" ? value : null;
+}
+
+function parseSelection(raw: unknown): SummaryChatSelection | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const start = readNumber(record, "start");
+  const end = readNumber(record, "end");
+  if (start === null || end === null) {
+    return undefined;
+  }
+  const content = readString(record, "content");
+  if (end <= start) {
+    return undefined;
+  }
+  return {
+    start,
+    end,
+    content,
+  };
+}
+
+function readNumber(input: Record<string, unknown>, key: string): number | null {
+  const value = input[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
 }
 
 function buildResponse<T>(response: JsonResponse<T>): Response {

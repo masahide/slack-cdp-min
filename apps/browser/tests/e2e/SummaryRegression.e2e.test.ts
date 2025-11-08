@@ -55,7 +55,12 @@ describe("サマリ編集フロー 回帰E2E", () => {
     });
     apiMock.setSuggestionResponse({
       status: 200,
-      body: { delta: suggestionDelta },
+      body: {
+        summaryUpdate: { mode: "append", content: suggestionDelta },
+        assistantMessage: "追記案を生成しました。",
+        reasoning: null,
+        responseId: "resp-mock",
+      },
     });
     apiMock.setSaveResponse({
       status: 200,
@@ -83,7 +88,7 @@ describe("サマリ編集フロー 回帰E2E", () => {
     await user.type(promptInput, "追加ポイント");
     await user.click(screen.getByRole("button", { name: "送信" }));
 
-    const applyButton = await screen.findByRole("button", { name: "提案を挿入" });
+    const applyButton = await screen.findByRole("button", { name: "追記" });
     await user.click(applyButton);
 
     const saveButton = screen.getByRole("button", { name: "保存" });
@@ -101,6 +106,10 @@ describe("サマリ編集フロー 回帰E2E", () => {
     const toast = await screen.findByText("サマリを保存しました。");
     expect(toast).toBeInTheDocument();
 
+    await waitFor(() => {
+      expect(screen.queryByText("追記案を生成しました。")).not.toBeInTheDocument();
+    });
+
     const savedLabel = await screen.findByText(/最終保存:/);
     expect(savedLabel.textContent ?? "").toContain("2025/11/03");
 
@@ -108,7 +117,9 @@ describe("サマリ編集フロー 回帰E2E", () => {
     expect(suggestionRequest).toMatchObject({
       prompt: "追加ポイント",
       content: expect.stringContaining("- 追記"),
+      previousResponseId: null,
     });
+    expect(suggestionRequest.selection).toBeUndefined();
   });
 
   it("サマリ初期化が失敗した場合にエラー通知が表示される", async () => {

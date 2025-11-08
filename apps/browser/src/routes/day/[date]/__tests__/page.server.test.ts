@@ -57,6 +57,8 @@ describe("routes/day/[date]/+page.server", () => {
     expect(result.clipboardTemplate.origin).toBe("default");
     expect(result.clipboardTemplate.source.length).toBeGreaterThan(0);
     expect(result.slackWorkspaceBaseUrl).toBeNull();
+    expect(result.llm.models).toEqual(["gpt-4o", "gpt-4.1-mini"]);
+    expect(result.llm.defaultModel).toBe("gpt-4o");
   });
 
   it("source クエリでフィルタする", async () => {
@@ -75,6 +77,7 @@ describe("routes/day/[date]/+page.server", () => {
       { name: "slack", count: 2, selected: true },
     ]);
     expect(result.slackWorkspaceBaseUrl).toBeNull();
+    expect(result.llm.models).toContain("gpt-4o");
   });
 
   it("サマリが存在しない場合は null", async () => {
@@ -116,6 +119,18 @@ describe("routes/day/[date]/+page.server", () => {
   function seedData() {
     const [year, month, day] = TARGET_DATE.split("-");
     const dayDir = join(dataDir, year, month, day);
+
+    mkdirSync(join(dataDir, "config"), { recursive: true });
+    writeFileSync(
+      join(dataDir, "config", "reaclog.config.json"),
+      JSON.stringify({
+        llm: {
+          models: ["gpt-4o", "gpt-4.1-mini"],
+          defaultModel: "gpt-4o",
+        },
+      }),
+      "utf-8"
+    );
 
     mkdirSync(join(dayDir, "slack"), { recursive: true });
     writeJsonl(join(dayDir, "slack", "events.jsonl"), [

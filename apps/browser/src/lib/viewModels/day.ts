@@ -16,4 +16,8 @@ export interface DayPageData {
     origin: "default" | "custom";
   };
   slackWorkspaceBaseUrl: string | null;
+  llm: {
+    models: string[];
+    defaultModel: string | null;
+  };
 }

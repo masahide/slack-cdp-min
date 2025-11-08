@@ -98,14 +98,6 @@
   gap: 0.5rem;
 }
 
-.summary-workspace .suggestions pre {
-  margin: 0;
-  white-space: pre-wrap;
-  font-family: inherit;
-  font-size: 0.85rem;
-  color: var(--text-primary);
-}
-
 .summary-workspace .suggestion-actions {
   display: flex;
   gap: 0.5rem;
@@ -119,6 +111,11 @@
   font-size: 0.8rem;
   padding: 0.3rem 0.9rem;
   cursor: pointer;
+}
+
+.summary-workspace .suggestion-actions button.secondary {
+  background: var(--surface-border-strong);
+  color: var(--text-secondary);
 }
 
 .summary-workspace .suggestion-actions button:hover {
@@ -147,4 +144,73 @@
 .summary-workspace .preview-body {
   flex: 1;
   overflow: auto;
+}
+
+.summary-workspace .suggestion-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.summary-workspace .assistant-message {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.summary-workspace .assistant-mode {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+.summary-workspace .assistant-selection {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+}
+
+.summary-workspace .assistant-reasoning {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.summary-workspace .diff-lines {
+  margin: 0;
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+  background: var(--code-block-bg);
+  font-family: var(--font-mono, ui-monospace);
+  font-size: 0.8rem;
+  line-height: 1.3;
+  overflow-x: auto;
+}
+
+.summary-workspace .diff-line {
+  display: block;
+  white-space: pre;
+}
+
+.summary-workspace .diff-line.add {
+  color: #15803d;
+}
+
+.summary-workspace .diff-line.remove {
+  color: #dc2626;
+}
+
+.summary-workspace .diff-line.context {
+  color: var(--text-secondary);
+}
+
+.summary-workspace .raw-suggestion {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  background: var(--surface-muted);
+  padding: 0.5rem;
+  border-radius: 0.5rem;
 }

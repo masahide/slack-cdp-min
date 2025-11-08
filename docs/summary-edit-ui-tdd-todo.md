@@ -50,14 +50,55 @@
 
 ## 8. Structured Output 対応サマリ提案 API
 
-- [ ] RED: `/api/summary/suggestion` のサーバーテストを追加し、リクエスト body／OpenAI リクエスト payload／レスポンス JSON が `summary_update` と `assistant_message` を含むこと、エラー時は 4xx/5xx を返すことを検証して失敗させる。
-- [ ] GREEN: `apps/browser/src/routes/api/summary/suggestion/+server.ts` を実装し、OpenAI Responses API へ Structured Output Schema 付きでリクエスト、モックを使ってテストを通す。
-- [ ] REFACTOR: スキーマ定義・OpenAI 呼び出しラッパー・エラーハンドリングをユーティリティへ切り出し、型定義を共有化する。
+- [x] RED: `/api/summary/suggestion` のサーバーテストを追加し、リクエスト body／OpenAI リクエスト payload／レスポンス JSON が `summary_update` と `assistant_message` を含むこと、エラー時は 4xx/5xx を返すことを検証して失敗させる。
+- [x] GREEN: `apps/browser/src/routes/api/summary/suggestion/+server.ts` を実装し、OpenAI Responses API へ Structured Output Schema 付きでリクエスト、モックを使ってテストを通す。
+- [x] REFACTOR: スキーマ定義・OpenAI 呼び出しラッパー・エラーハンドリングをユーティリティへ切り出し、型定義を共有化する。
 
-- [ ] RED: `SummaryWorkspace` のコンポーネントテストで、API 応答の `summary_update` に応じて本文を置換／追記し、`assistant_message` を別領域に表示する振る舞いを追加して失敗させる。
-- [ ] GREEN: `requestSuggestion` クライアントを更新し、新フォーマットをパースしてエディタ内容と提案ログを反映する実装を通す。
-- [ ] REFACTOR: 差分適用ロジックを純関数化し、`mode: replace/append/none` の分岐をユニットテストで網羅する。
+- [x] RED: `SummaryWorkspace` のコンポーネントテストで、API 応答の `summary_update` に応じて本文を置換／追記し、`assistant_message` を別領域に表示する振る舞いを追加して失敗させる。
+- [x] GREEN: `requestSuggestion` クライアントを更新し、新フォーマットをパースしてエディタ内容と提案ログを反映する実装を通す。
+- [x] REFACTOR: 差分適用ロジックを純関数化し、`mode: replace/append/none` の分岐をユニットテストで網羅する。
 
-- [ ] RED: `SummaryRegression.e2e.test.ts` に構造化応答を返すモックを追加し、LLM メッセージ表示とサマリ更新を確認するシナリオを先に失敗させる。
-- [ ] GREEN: ルート・クライアント両対応後に E2E を通し、既存フロー回帰も確認する。
-- [ ] REFACTOR: テスト用 OpenAI モックを共通化し、API キー欠如や OpenAI 側 422 応答など例外パスも追加入力できるようヘルパーを整理する。
+- [x] RED: `SummaryRegression.e2e.test.ts` に構造化応答を返すモックを追加し、LLM メッセージ表示とサマリ更新を確認するシナリオを先に失敗させる。
+- [x] GREEN: ルート・クライアント両対応後に E2E を通し、既存フロー回帰も確認する。
+- [x] REFACTOR: テスト用 OpenAI モックを共通化し、API キー欠如や OpenAI 側 422 応答など例外パスも追加入力できるようヘルパーを整理する。
+
+### レビュー指摘メモ
+
+- [x] `/day/<date>/summary` エンドポイントが存在せず、ロード／保存 API 呼び出しが 404 となる。
+- [x] `SummaryEditorShell` の `create` イベントがワークスペース側で未配線のため、サマリ再生成ボタンが無反応。
+- [x] LLM モデル一覧がハードコードされており、`reaclog.config.json` の既定モデル設定が反映されない。
+- [x] LLM 提案 UI は構造化応答で追記・置換を適用できるようになったが、差分プレビューや選択範囲送信、提案のキャンセル操作は未実装。
+- [x] 編集ペインとプレビューペインのスクロール同期が未実装。
+
+## 9. レビュー指摘対応
+
+- [x] RED: `/day/<date>/summary` が未実装で 404 を返すことをサーバーロードテストで失敗させる。
+- [x] GREEN: `apps/browser/src/routes/day/[date]/summary/+server.ts` を追加し、GET/POST/PUT で日次サマリの読み書きを実装する。
+- [x] REFACTOR: API レイヤーと `createSummaryApiMock` のレスポンス整形を共通化し、エラー応答も揃える。
+
+- [x] RED: `SummaryEditorShell` の `create` ボタンが初期化フローを呼ばないことを検出するコンポーネントテストを追加する。
+- [x] GREEN: `SummaryWorkspace` から `startSummaryCreation` を呼び出せるようにイベント型を拡張し配線する。
+- [x] REFACTOR: エディタ操作イベント型を整理し、create/save/input を一貫したパターンに統合する。
+
+- [x] RED: LLM モデル一覧が固定配列であることをテストで露出させ、`reaclog.config.json` の既定モデルをモックして失敗させる。
+- [x] GREEN: モデル一覧と既定値を設定ファイルからロードする仕組みを追加し、UI の既定選択が設定に従うようにする。
+- [x] REFACTOR: モデル設定ストアを用意して他ビューからも再利用できるようにする。
+
+- [x] RED: LLM 提案が append 挿入のみで「置き換え」「キャンセル」が無いことをテストで検出する。
+- [x] GREEN: サジェストアイテムに差分プレビューと「置き換え」「追記」「キャンセル」操作を実装し、選択範囲送信にも対応する。
+- [x] REFACTOR: 差分計算と適用処理を純関数・専用コンポーネントへ抽出し、状態管理を簡潔にする。
+
+- [x] RED: 編集ペインとプレビューペインのスクロールが同期しないことをインタラクションテストで失敗させる。
+- [x] GREEN: 双方向スクロール同期を実装し、コードブロック・表・チェックボックスを含む場合でも滑らかに連動させる。
+- [x] REFACTOR: スクロール同期ロジックをユーティリティ化し、再利用可能にする。
+
+## 10. フォローアップ TODO
+
+- [x] RED: Markdown プレビュー要素生成後にスクロール同期が再初期化されないことを再現するテストを追加する。
+- [x] GREEN: `SummaryWorkspace` のスクロール同期を、プレビュー描画完了後にも `refreshScrollSync` が走るよう修正する。
+
+- [x] RED: 空のサマリ本文で `/api/summary/suggestion` が 400 を返すことを検証するテストを追加する。
+- [x] GREEN: サマリ本文が空の場合でも `content` を許容し、`model`/`prompt` のみ必須となるようバリデーションを修正する。
+
+- [x] RED: ファイルが存在していても本文が空だと「未作成」扱いになる UI ステートをテストで露出させる。
+- [x] GREEN: `+page.svelte` のサマリ存在判定を `data.summary !== null` など実ファイル存在に基づく形へ修正する。

@@ -1,9 +1,17 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
+  import { afterUpdate, createEventDispatcher, onDestroy } from "svelte";
   import SummaryEditorShell from "$lib/components/summary/SummaryEditorShell.svelte";
   import MarkdownPreview from "$lib/components/summary/MarkdownPreview.svelte";
-  import { requestSuggestion } from "$lib/client/summary/chat";
-  import type { SummaryEditorDraft, SummaryWorkspaceEvents } from "./types";
+  import { requestSuggestion, type SummaryChatSelection } from "$lib/client/summary/chat";
+  import { diffSummary, type SummaryDiffLine } from "$lib/summary/diff";
+  import { applySummaryUpdate } from "$lib/summary/update";
+  import { synchronizeByRatio } from "$lib/scroll/sync";
+  import type {
+    SummaryEditorDraft,
+    SummarySuggestionPayload,
+    SummaryUpdate,
+    SummaryWorkspaceEvents,
+  } from "./types";
 
   export let draft: SummaryEditorDraft;
   export let models: string[] = [];
@@ -16,18 +24,35 @@
 
   const dispatch = createEventDispatcher<SummaryWorkspaceEvents>();
 
-  type Suggestion = {
+  type SelectionSnapshot = {
+    start: number;
+    end: number;
+    content: string;
+  };
+
+  type SuggestionEntry = {
     id: number;
-    text: string;
+    payload: SummarySuggestionPayload;
+    diff: SummaryDiffLine[];
+    selection: SelectionSnapshot | null;
+    baseContent: string;
   };
 
   let prompt = "";
   let selectedModel = activeModel ?? models[0] ?? "";
   let draftSignature = signature(draft);
   let editorDraft: SummaryEditorDraft = { ...draft };
-  let suggestions: Suggestion[] = [];
+  let suggestions: SuggestionEntry[] = [];
   let localChatBusy = false;
   let suggestionSeq = 0;
+  let lastResponseId: string | null = null;
+
+  let editorRef: SummaryEditorShell | null = null;
+  let previewRef: MarkdownPreview | null = null;
+  let editorElement: HTMLTextAreaElement | null = null;
+  let previewElement: HTMLElement | null = null;
+  let disposeScrollSync: (() => void) | null = null;
+  let scrollSyncing = false;
 
   $: {
     if (activeModel && activeModel !== selectedModel) {
@@ -42,6 +67,64 @@
     if (nextSignature !== draftSignature) {
       draftSignature = nextSignature;
       editorDraft = { ...draft };
+      lastResponseId = null;
+      suggestions = [];
+      suggestionSeq = 0;
+    }
+  }
+
+  $: {
+    const nextEditor = editorRef?.getTextarea?.() ?? null;
+    if (nextEditor !== editorElement) {
+      editorElement = nextEditor;
+      refreshScrollSync();
+    }
+  }
+
+  onDestroy(() => {
+    disposeScrollSync?.();
+  });
+
+  afterUpdate(() => {
+    const nextPreview = previewRef?.getScrollableElement?.() ?? null;
+    if (nextPreview !== previewElement) {
+      previewElement = nextPreview;
+      refreshScrollSync();
+    }
+  });
+
+  function refreshScrollSync() {
+    disposeScrollSync?.();
+    disposeScrollSync = null;
+    if (!editorElement || !previewElement) {
+      return;
+    }
+    const editor = editorElement;
+    const preview = previewElement;
+    const handleEditor = () => synchronizeScroll("editor");
+    const handlePreview = () => synchronizeScroll("preview");
+    editor.addEventListener("scroll", handleEditor);
+    preview.addEventListener("scroll", handlePreview);
+    disposeScrollSync = () => {
+      editor.removeEventListener("scroll", handleEditor);
+      preview.removeEventListener("scroll", handlePreview);
+    };
+  }
+
+  function synchronizeScroll(origin: "editor" | "preview") {
+    if (!editorElement || !previewElement || scrollSyncing) {
+      return;
+    }
+    const source = origin === "editor" ? editorElement : previewElement;
+    const target = origin === "editor" ? previewElement : editorElement;
+    scrollSyncing = true;
+    synchronizeByRatio(source, target);
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        scrollSyncing = false;
+      });
+    } else {
+      scrollSyncing = false;
     }
   }
 
@@ -55,21 +138,38 @@
     if (!trimmedPrompt || !model || chatBusy()) {
       return;
     }
+    const selection = captureSelection();
+    const selectionPayload: SummaryChatSelection | undefined = selection
+      ? {
+          start: selection.start,
+          end: selection.end,
+          content: selection.content,
+        }
+      : undefined;
+    const baseContent = editorDraft.content;
     localChatBusy = true;
     try {
       const response = await requestSuggestion({
         model,
         prompt: trimmedPrompt,
-        content: editorDraft.content,
+        content: baseContent,
+        previousResponseId: lastResponseId ?? undefined,
+        selection: selectionPayload,
       });
       suggestionSeq += 1;
       suggestions = [
         ...suggestions,
         {
           id: suggestionSeq,
-          text: response.delta,
+          payload: response,
+          diff: diffSummary(baseContent, applySummaryUpdate(baseContent, response.summaryUpdate)),
+          selection,
+          baseContent,
         },
       ];
+      if (response.responseId) {
+        lastResponseId = response.responseId;
+      }
       dispatch("promptsubmit", { prompt: trimmedPrompt, model });
       prompt = "";
     } catch (error) {
@@ -77,6 +177,18 @@
     } finally {
       localChatBusy = false;
     }
+  }
+
+  function captureSelection(): SelectionSnapshot | null {
+    const handle = editorRef;
+    if (!handle || typeof handle.getSelection !== "function") {
+      return null;
+    }
+    const snapshot = handle.getSelection();
+    if (!snapshot || snapshot.end <= snapshot.start) {
+      return null;
+    }
+    return snapshot;
   }
 
   function handleModelChange(event: Event) {
@@ -96,14 +208,69 @@
     dispatch("draftsave", event.detail);
   }
 
-  function applySuggestion(suggestion: Suggestion) {
-    const nextContent = [editorDraft.content, suggestion.text].filter(Boolean).join("\n");
+  function handlePreviewReady(event: CustomEvent<{ element: HTMLElement | null }>) {
+    const nextPreview = event.detail.element ?? null;
+    if (nextPreview !== previewElement) {
+      previewElement = nextPreview;
+      refreshScrollSync();
+    }
+  }
+
+  function handleDraftCreate(event: CustomEvent<{ date: string }>) {
+    dispatch("draftcreate", event.detail);
+  }
+
+  function applySuggestion(suggestion: SuggestionEntry, mode: SummaryUpdate["mode"]) {
+    if (!hasSuggestionContent(suggestion.payload.summaryUpdate)) {
+      return;
+    }
+    const nextContent = applySummaryUpdate(
+      editorDraft.content,
+      suggestion.payload.summaryUpdate,
+      mode
+    );
     updateEditorDraft(nextContent);
+    dismissSuggestion(suggestion.id);
+  }
+
+  function dismissSuggestion(id: number) {
+    suggestions = suggestions.filter((item) => item.id !== id);
   }
 
   function updateEditorDraft(content: string) {
     editorDraft = { ...editorDraft, content };
     dispatch("draftinput", { content });
+  }
+
+  function hasSuggestionContent(update: SummaryUpdate): boolean {
+    return update.mode !== "none" && update.content.trim().length > 0;
+  }
+
+  function formatDiffLine(line: SummaryDiffLine): string {
+    const prefix = line.type === "add" ? "+" : line.type === "remove" ? "-" : " ";
+    return `${prefix}${line.value}`;
+  }
+
+  function describeMode(mode: SummaryUpdate["mode"]): string {
+    switch (mode) {
+      case "replace":
+        return "推奨操作: 置き換え";
+      case "append":
+        return "推奨操作: 追記";
+      default:
+        return "推奨操作: 確認のみ";
+    }
+  }
+
+  function summarizeSelection(selection: SelectionSnapshot | null): string | null {
+    if (!selection) {
+      return null;
+    }
+    const trimmed = selection.content.trim();
+    if (!trimmed) {
+      return "(空白)";
+    }
+    return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}…`;
   }
 
   function signature(input: SummaryEditorDraft): string {
@@ -143,13 +310,53 @@
       <section class="suggestions">
         <h3>提案</h3>
         <ul>
-          {#each suggestions as suggestion}
+          {#each suggestions as suggestion (suggestion.id)}
             <li>
-              <pre>{suggestion.text}</pre>
+              <header class="suggestion-header">
+                <p class="assistant-message">{suggestion.payload.assistantMessage}</p>
+                <span class="assistant-mode">
+                  {describeMode(suggestion.payload.summaryUpdate.mode)}
+                </span>
+              </header>
+              {#if summarizeSelection(suggestion.selection)}
+                <p class="assistant-selection">
+                  選択範囲: {summarizeSelection(suggestion.selection)}
+                </p>
+              {/if}
+              {#if suggestion.diff.length > 0}
+                <pre class="diff-lines">
+                  {#each suggestion.diff as line, index (index)}
+                    <code class={`diff-line ${line.type}`}>{formatDiffLine(line)}</code>
+                  {/each}
+                </pre>
+              {:else if hasSuggestionContent(suggestion.payload.summaryUpdate)}
+                <pre class="raw-suggestion">{suggestion.payload.summaryUpdate.content}</pre>
+              {/if}
+              {#if suggestion.payload.reasoning}
+                <p class="assistant-reasoning">{suggestion.payload.reasoning}</p>
+              {/if}
               <div class="suggestion-actions">
-                <button type="button" on:click={() => applySuggestion(suggestion)}
-                  >提案を挿入</button
+                <button
+                  type="button"
+                  on:click={() => applySuggestion(suggestion, "replace")}
+                  disabled={!hasSuggestionContent(suggestion.payload.summaryUpdate) || chatBusy()}
                 >
+                  置き換え
+                </button>
+                <button
+                  type="button"
+                  on:click={() => applySuggestion(suggestion, "append")}
+                  disabled={!hasSuggestionContent(suggestion.payload.summaryUpdate) || chatBusy()}
+                >
+                  追記
+                </button>
+                <button
+                  type="button"
+                  class="secondary"
+                  on:click={() => dismissSuggestion(suggestion.id)}
+                >
+                  キャンセル
+                </button>
               </div>
             </li>
           {/each}
@@ -160,8 +367,10 @@
 
   <section class="pane editor" aria-label="Markdown 編集">
     <SummaryEditorShell
+      bind:this={editorRef}
       isBusy={isEditorBusy}
       draft={editorDraft}
+      on:create={handleDraftCreate}
       on:input={handleDraftInput}
       on:save={handleDraftSave}
     />
@@ -182,7 +391,12 @@
       <h2>Markdown プレビュー</h2>
     </header>
     <div class="preview-body">
-      <MarkdownPreview markdown={editorDraft.content} debounce={300} />
+      <MarkdownPreview
+        bind:this={previewRef}
+        markdown={editorDraft.content}
+        debounce={300}
+        on:ready={handlePreviewReady}
+      />
     </div>
   </section>
 </div>

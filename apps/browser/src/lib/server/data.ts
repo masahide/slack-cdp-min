@@ -76,7 +76,7 @@ export async function readDailySummary(options: ReadDailySummaryOptions): Promis
   }
 
   const { year, month, day } = splitDate(date);
-  const summaryPath = join(dataDir, year, month, day, "summaries", "daily.md");
+  const summaryPath = resolveDailySummaryPath(dataDir, { year, month, day });
 
   try {
     const content = await fs.readFile(summaryPath, "utf-8");
@@ -98,6 +98,54 @@ export async function readDailySummary(options: ReadDailySummaryOptions): Promis
 function splitDate(date: string): { year: string; month: string; day: string } {
   const [year, month, day] = date.split("-");
   return { year, month, day };
+}
+
+type SplitDate = { year: string; month: string; day: string };
+
+export function resolveDailySummaryPath(dataDir: string, parts: SplitDate): string {
+  return join(dataDir, parts.year, parts.month, parts.day, "summaries", "daily.md");
+}
+
+export async function writeDailySummary(options: {
+  dataDir: string;
+  date: string;
+  content: string;
+}): Promise<{ savedAt: string }> {
+  const { dataDir, date, content } = options;
+  const parts = splitDate(date);
+  const summaryPath = resolveDailySummaryPath(dataDir, parts);
+  const summaryDir = join(dataDir, parts.year, parts.month, parts.day, "summaries");
+
+  await fs.mkdir(summaryDir, { recursive: true });
+  await fs.writeFile(summaryPath, content, "utf-8");
+  const stats = await fs.stat(summaryPath);
+
+  const cacheKey = createCacheKey(dataDir, date);
+  summaryCache.set(cacheKey, content);
+
+  return { savedAt: new Date(stats.mtime).toISOString() };
+}
+
+export async function readDailySummaryStats(
+  dataDir: string,
+  date: string
+): Promise<{ exists: boolean; updatedAt: string | null }> {
+  const summaryPath = resolveDailySummaryPath(dataDir, splitDate(date));
+  try {
+    const stats = await fs.stat(summaryPath);
+    return {
+      exists: true,
+      updatedAt: new Date(stats.mtime).toISOString(),
+    };
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return {
+        exists: false,
+        updatedAt: null,
+      };
+    }
+    throw error;
+  }
 }
 
 type SourceDescriptor = {

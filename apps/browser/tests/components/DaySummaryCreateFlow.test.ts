@@ -104,6 +104,21 @@ describe("日報サマリ作成導線 (RED)", () => {
     });
   });
 
+  it("サマリファイルが空でもプレビューを表示する", async () => {
+    pageState.value = createPageState({ search: "" });
+
+    const { default: DayPage } = await import("../../src/routes/day/[date]/+page.svelte");
+
+    render(DayPage, {
+      props: {
+        data: createDayPageData({ summary: "" }),
+      },
+    });
+
+    expect(await screen.findByText("Markdown サマリ")).toBeInTheDocument();
+    expect(await screen.findByText("サマリがまだありません。")).toBeInTheDocument();
+  });
+
   it("サマリ保存時にドラフトを保存 API へ送信する", async () => {
     pageState.value = createPageState({ search: "?summary=edit" });
 
@@ -127,6 +142,54 @@ describe("日報サマリ作成導線 (RED)", () => {
 
     expect(summaryApiMocks.saveSummaryDraft).toHaveBeenCalledWith("2025-11-03", {
       content: "# existing\n- 追記",
+    });
+  });
+
+  it("LLM モデル一覧が設定ファイルの既定値で初期化される", async () => {
+    pageState.value = createPageState({ search: "?summary=edit" });
+    const { default: DayPage } = await import("../../src/routes/day/[date]/+page.svelte");
+
+    render(DayPage, {
+      props: {
+        data: createDayPageData({
+          llm: {
+            models: ["claude-3-5", "gpt-4o-mini"],
+            defaultModel: "claude-3-5",
+          },
+        }),
+      },
+    });
+
+    await waitFor(() => {
+      expect(summaryApiMocks.loadSummaryDraft).toHaveBeenCalledWith("2025-11-03");
+    });
+
+    const select = await screen.findByLabelText("LLM モデル");
+    const optionValues = Array.from((select as HTMLSelectElement).options).map((opt) => opt.value);
+    expect(optionValues).toEqual(["claude-3-5", "gpt-4o-mini"]);
+    expect((select as HTMLSelectElement).value).toBe("claude-3-5");
+  });
+
+  it("編集画面のサマリ作成ボタンから初期化フローを呼び出す", async () => {
+    pageState.value = createPageState({ search: "?summary=edit" });
+    const { default: DayPage } = await import("../../src/routes/day/[date]/+page.svelte");
+    const user = userEvent.setup();
+
+    render(DayPage, {
+      props: { data: createDayPageData({ summary: "# existing" }) },
+    });
+
+    await waitFor(() => {
+      expect(summaryApiMocks.loadSummaryDraft).toHaveBeenCalledWith("2025-11-03");
+    });
+
+    // SummaryEditorShell 内のボタンをクリックする
+    const buttons = screen.getAllByRole("button", { name: "サマリを作成" });
+    const editorButton = buttons[buttons.length - 1];
+    await user.click(editorButton);
+
+    await waitFor(() => {
+      expect(summaryApiMocks.initializeSummaryDraft).toHaveBeenCalledWith("2025-11-03");
     });
   });
 });

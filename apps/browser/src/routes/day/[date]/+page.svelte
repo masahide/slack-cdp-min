@@ -42,6 +42,7 @@
     type SummaryDraftPayload,
   } from "$lib/client/summary/api";
   import { formatSummarySavedAt } from "$lib/summary/format";
+  import { initializeLlmStore } from "$lib/stores/llm";
 
   export let data: PageData;
 
@@ -81,15 +82,16 @@
     loading: false,
     saving: false,
     content: data.summary ?? "",
-    exists: Boolean(data.summary),
+    exists: data.summary !== null,
     updatedAt: undefined,
     error: null,
     lastSavedAt: null,
   });
   let summaryFetchPromise: Promise<void> | null = null;
   let summaryActionPending = false;
-  const llmModels = ["gpt-4.1-mini", "gpt-4o"];
-  let activeModel = llmModels[0] ?? "";
+  const llmModels = data.llm.models ?? [];
+  let activeModel = data.llm.defaultModel ?? llmModels[0] ?? "";
+  initializeLlmStore(data.llm);
   $: summarySavedLabel = formatSummarySavedAt(
     $summaryDraftState.lastSavedAt ?? $summaryDraftState.updatedAt ?? null
   );
@@ -423,7 +425,7 @@
       loading: false,
       saving: false,
       content: payload.content ?? "",
-      exists: Boolean(payload.exists),
+      exists: payload.exists,
       updatedAt: payload.updatedAt,
       error: null,
       lastSavedAt: payload.updatedAt ?? null,
@@ -443,6 +445,10 @@
 
   function handleWorkspaceDraftSave(event: CustomEvent<{ content: string }>) {
     void saveDraft(event.detail.content);
+  }
+
+  function handleWorkspaceDraftCreate() {
+    void startSummaryCreation();
   }
 
   async function saveDraft(content: string): Promise<void> {
@@ -536,6 +542,7 @@
         on:modelchange={handleWorkspaceModelChange}
         on:draftinput={handleWorkspaceDraftInput}
         on:draftsave={handleWorkspaceDraftSave}
+        on:draftcreate={handleWorkspaceDraftCreate}
       />
       {#if $summaryDraftState.error}
         <p class="summary-error" role="alert">{$summaryDraftState.error}</p>
@@ -615,10 +622,10 @@
       {/if}
     </div>
 
-    {#if !$isSummaryEditing && data.summary}
+    {#if !$isSummaryEditing && data.summary !== null}
       <aside class="summary">
         <h2>Markdown サマリ</h2>
-        <MarkdownPreview markdown={data.summary} debounce={0} />
+        <MarkdownPreview markdown={data.summary ?? ""} debounce={0} />
       </aside>
     {/if}
   </section>

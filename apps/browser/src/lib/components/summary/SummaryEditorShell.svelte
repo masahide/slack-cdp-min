@@ -15,6 +15,7 @@
   let value = draft?.content ?? "";
   let draftSignature = signature(draft);
   let textareaId = createTextareaId(draft);
+  let textarea: HTMLTextAreaElement | null = null;
   const debouncedInput = useDebouncedWritable(value, {
     delay: 500,
     onFlush: (content) => {
@@ -68,6 +69,25 @@
     const suffix = input?.date ? input.date.replace(/[^a-z0-9_-]/gi, "-") : "unknown";
     return `summary-editor-body-${suffix}`;
   }
+
+  export function getSelection(): { start: number; end: number; content: string } {
+    if (!textarea) {
+      return { start: 0, end: 0, content: "" };
+    }
+    const start = textarea.selectionStart ?? 0;
+    const end = textarea.selectionEnd ?? 0;
+    const actualStart = Math.min(start, end);
+    const actualEnd = Math.max(start, end);
+    return {
+      start: Math.max(actualStart, 0),
+      end: Math.max(actualEnd, 0),
+      content: textarea.value.slice(Math.max(actualStart, 0), Math.max(actualEnd, 0)),
+    };
+  }
+
+  export function getTextarea(): HTMLTextAreaElement | null {
+    return textarea;
+  }
 </script>
 
 <div class="summary-editor-shell" data-testid="summary-editor-shell">
@@ -89,6 +109,7 @@
         id={textareaId}
         aria-labelledby={`${textareaId}-label`}
         bind:value
+        bind:this={textarea}
         on:input={handleInput}
         on:keydown={handleKeydown}
         spellcheck="false"

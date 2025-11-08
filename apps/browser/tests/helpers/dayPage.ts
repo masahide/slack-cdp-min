@@ -29,6 +29,10 @@ export function createDayPageData(overrides: Partial<DayPageData> = {}): DayPage
       origin: "default",
     },
     slackWorkspaceBaseUrl: null,
+    llm: {
+      models: ["gpt-4.1-mini"],
+      defaultModel: "gpt-4.1-mini",
+    },
   };
 
   return {

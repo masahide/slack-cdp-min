@@ -14,3 +14,16 @@ declare global {
 }
 
 export {};
+
+declare module "$env/static/private" {
+  export const OPENAI_API_KEY: string | undefined;
+}
+
+declare module "openai" {
+  export default class OpenAI {
+    constructor(options: { apiKey: string });
+    responses: {
+      create(payload: Record<string, unknown>): Promise<unknown>;
+    };
+  }
+}

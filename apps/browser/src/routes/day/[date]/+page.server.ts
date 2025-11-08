@@ -1,5 +1,6 @@
 import { readDailyEvents, readDailySummary } from "$lib/server/data";
 import { resolveDataDir, resolveSlackWorkspaceBaseUrl } from "$lib/server/config";
+import { loadLlmConfig } from "$lib/server/llmConfig";
 import { loadClipboardTemplate } from "$lib/server/clipboardTemplate";
 import type { TimelineEvent } from "$lib/server/types";
 import type { DayPageData, DaySourceOption } from "$lib/viewModels/day";
@@ -20,15 +21,20 @@ export const load: PageServerLoad = async (event) => {
         origin: "default",
       },
       slackWorkspaceBaseUrl: resolveSlackWorkspaceBaseUrl(),
+      llm: {
+        models: [],
+        defaultModel: null,
+      },
     } satisfies DayPageData;
   }
 
   const dataDir = resolveDataDir();
   const slackWorkspaceBaseUrl = resolveSlackWorkspaceBaseUrl();
-  const [eventsResult, summary, template] = await Promise.all([
+  const [eventsResult, summary, template, llmConfig] = await Promise.all([
     readDailyEvents({ dataDir, date }),
     readDailySummary({ dataDir, date }),
     loadClipboardTemplate(),
+    loadLlmConfig(),
   ]);
 
   const sourceCounts = eventsResult.bySource;
@@ -54,6 +60,10 @@ export const load: PageServerLoad = async (event) => {
       origin: template.origin,
     },
     slackWorkspaceBaseUrl,
+    llm: {
+      models: llmConfig.models,
+      defaultModel: llmConfig.defaultModel,
+    },
   } satisfies DayPageData;
 };
 
