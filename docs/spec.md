@@ -507,13 +507,44 @@ export interface IngestionAdapter {
 - Slack パーマリンクを有効にする場合は `REACLOG_SLACK_WORKSPACE` または `REACLOG_SLACK_WORKSPACE_URL` を設定する（例：`REACLOG_SLACK_WORKSPACE=example-team`）。
 - 本番確認時は `pnpm --filter browser build && pnpm --filter browser preview` を利用する。
 
-### 5.4 CLI 拡張（将来）
+### 5.4 単一起動オーケストレータ（`pnpm run serve` / リリース想定）
+
+- `scripts/serve.ts` を新設し、Slack CDP ヘルパー・JSONL 収集デーモン・ビューアを**1 コマンドで起動/停止**できるようにする。開発用 `scripts/dev.ts` と同じく `spawn` ベースだが、以下の点を本番向けに最適化する。
+  - **Slack CDP チェック**：`ensureSlackWithCdp` を共通化し、`--skip-slack-helper` フラグで既に CDP が有効な環境では Slack 再起動を省略できるようにする。
+    - Slack が既に起動している場合は必ずユーザーに終了可否を確認する。非対話モードでは自動終了せずエラーで中断し、手動停止を案内する。
+  - **バックエンド起動**：`dist/backend/index.js`（`pnpm run build:backend` もしくは `pnpm run build:runtime` で生成）を `node` で実行し、ログを `logs/runtime/backend.log` にストリーミング。プロセス終了時は自動でリスタート（最大 5 回、指数バックオフ）。
+  - **フロントエンド起動**：`apps/browser/build` の SvelteKit アプリを `node apps/browser/build/index.js` で起動。`--no-browser` フラグで省略可能。起動前に成果物の存在を確認し、無ければエラーメッセージとともに終了。
+  - **ブラウザ自動起動**：`--open` フラグを指定すると、フロントエンドが HTTP 応答を返し始めた時点で既定ブラウザ（macOS: `open` / Windows: `start` / Linux: `xdg-open`）を起動し、`http://localhost:<port>` を表示する。
+  - **シグナル処理**：SIGINT/SIGTERM 受信時に子プロセスへ順番に SIGTERM→SIGKILL を送り、すべてのログストリームをクローズしてから終了コード 0 で落ちる。異常終了時は終了コード 1。
+  - **構成ファイル読み込み**：デフォルトで `reaclog.config.json` を参照し、`--config` で上書き可能。`dataDir` や `timezone` 等を子プロセスへ環境変数として受け渡す。
+- `pnpm run serve`（`node --import tsx scripts/serve.ts`）をリポジトリの標準起動コマンドとし、将来的なネイティブバンドル（`nexe` など）ではこのエントリポイントをラップする。
+
+### 5.5 パッケージ生成フロー（nexe 前段階）
+
+- `pnpm run package:prepare` を追加し、以下の手順で `out/reaclog-runtime/` に本番用成果物を整える。
+  1. `pnpm run build:runtime` で `dist/backend/index.js` と `apps/browser/build/` をまとめて生成。
+  2. `pnpm run build:serve` で `scripts/serve.ts` を `dist/cli/serve.js` にコンパイル（`tsc` を利用）。
+  3. 出力ディレクトリを初期化し、以下の構成でコピーする。
+     ```
+     out/reaclog-runtime/
+       bin/reaclog.js        # shebang 付き CLI。内部で dist/cli/serve.js を require。
+       backend/index.js      # dist/backend/index.js を配置
+       browser/              # apps/browser/build 以下をサブディレクトリごとコピー
+       hack/launch_slack_cdp.sh
+       config/reaclog.config.sample.json
+       VERSION               # git describe --tags の結果を埋め込む
+     ```
+  4. `bin/reaclog.js` は `reaclog serve` を既定サブコマンドとして実行し、`--` 以降のフラグを `serve` スクリプトへ透過的に渡す。`chmod +x` を適用して tarball 展開後すぐ実行できるようにする。
+- 上記 tarball を配布する段階ではまだ Node バイナリは含めず、利用者には既存の Node 18 以上を要求する。将来 `nexe` で単一バイナリ化する際は `bin/reaclog.js` をエントリポイントに採用するだけでよいように設計しておく。
+- パッケージ生成時に CI で `pnpm run qa` と `pnpm run package:prepare` を連結し、`out/reaclog-runtime` を成果物としてアップロードする。
+
+### 5.6 CLI 拡張（将来）
 
 - `reaclog summary --day 2025-11-03`：JSONL から日次要約を生成
 - `reaclog search --q "keyword"`：`rg` + `jq` で検索
 - `reaclog export --day 2025-11-03 --out daily-2025-11-03.md`
 
-### 5.5 スケジューリング（将来）
+### 5.7 スケジューリング（将来）
 
 - **Windows**：タスク スケジューラ
 - **Linux/macOS**：cron/systemd timer

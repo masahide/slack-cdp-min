@@ -6,12 +6,15 @@ import prettier from "eslint-config-prettier";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import globals from "globals";
+import sveltePlugin from "eslint-plugin-svelte";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default [
   // 無視パターン
-  { ignores: ["node_modules", "dist", "build", "coverage", "**/.svelte-kit/**"] },
+  {
+    ignores: ["node_modules", "dist", "build", "coverage", "**/.svelte-kit/**", "**/build/**"],
+  },
 
   // JS の推奨
   js.configs.recommended,
@@ -51,6 +54,47 @@ export default [
         projectService: false,
         tsconfigRootDir: __dirname,
       },
+    },
+  },
+
+  ...(() => {
+    const base = sveltePlugin.configs["flat/recommended"];
+    if (!Array.isArray(base)) {
+      throw new Error("eslint-plugin-svelte flat/recommended config is not an array");
+    }
+    return base.map((config) => {
+      if (!config.files) {
+        return config;
+      }
+      const languageOptions = config.languageOptions ?? {};
+      const parserOptions = languageOptions.parserOptions ?? {};
+      return {
+        ...config,
+        languageOptions: {
+          ...languageOptions,
+          parserOptions: {
+            ...parserOptions,
+            tsconfigRootDir: __dirname,
+            parser: {
+              ...(typeof parserOptions.parser === "object" ? parserOptions.parser : {}),
+              ts: tsparser,
+            },
+          },
+          globals: {
+            ...(languageOptions.globals ?? {}),
+            ...globals.browser,
+          },
+        },
+      };
+    });
+  })(),
+  {
+    files: ["**/*.svelte"],
+    rules: {
+      "svelte/no-navigation-without-resolve": "off",
+      "svelte/no-at-html-tags": "off",
+      "svelte/prefer-svelte-reactivity": "off",
+      "svelte/require-each-key": "off",
     },
   },
 

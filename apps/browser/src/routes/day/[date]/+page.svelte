@@ -28,7 +28,6 @@
     getEventPresentation,
     getReactionEmoji,
     type EventPresentation,
-    type EventKind,
   } from "$lib/presentation/event";
   import { resolveSlackPermalink } from "$lib/presentation/slack";
   import { buildClipboardPayload } from "$lib/presentation/clipboard";
@@ -104,7 +103,7 @@
     const query = params.toString();
     await goto(`${current.url.pathname}${query ? `?${query}` : ""}`, {
       replaceState: true,
-      keepfocus: true,
+      keepFocus: true,
       noScroll: true,
     });
   });

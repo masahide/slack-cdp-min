@@ -1,9 +1,11 @@
-import adapter from "@sveltejs/adapter-auto";
+import adapter from "@sveltejs/adapter-node";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
 const config = {
   kit: {
-    adapter: adapter(),
+    adapter: adapter({
+      precompress: true,
+    }),
     typescript: {
       config: (generatedConfig) => {
         // SvelteKit が生成する tsconfig を共有ベース設定に紐付ける

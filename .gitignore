@@ -20,6 +20,7 @@ build/
 # Deployment adapters (ignore local deploy outputs)
 .vercel/
 .netlify/
+dist/
 
 # OS cruft
 .DS_Store

@@ -4,7 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx scripts/dev.ts",
+    "serve": "tsx scripts/serve.ts",
     "start": "tsx src/index.ts",
+    "build:backend": "tsc -p tsconfig.backend.json",
+    "build:browser": "pnpm --filter browser build",
+    "build:runtime": "pnpm run build:backend && pnpm run build:browser",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -12,7 +16,7 @@
     "format:write": "prettier --write .",
     "test": "bash -lc 'files=$(find tests -type f -name \"*.test.ts\"); if [ -z \"$files\" ]; then echo \"No tests found\"; exit 1; fi; node --import tsx --test $files'",
     "test:slack": "node --import tsx --test \"tests/slack/**/*.test.ts\"",
-    "qa": "pnpm run typecheck && pnpm run lint && pnpm run format && pnpm run test && pnpm --filter browser exec svelte-kit sync && pnpm --filter browser exec tsc --noEmit && pnpm --filter browser test"
+    "qa": "pnpm run typecheck && pnpm run lint && pnpm run format && pnpm run test && pnpm --filter browser exec svelte-check && pnpm --filter browser exec svelte-kit sync && pnpm --filter browser exec tsc --noEmit && pnpm --filter browser test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -21,7 +25,7 @@
     "@typescript-eslint/eslint-plugin": "^8.46.3",
     "@typescript-eslint/parser": "^8.46.3",
     "chrome-remote-interface": "^0.33.3",
-    "devtools-protocol": "^0.0.1541017",
+    "devtools-protocol": "^0.0.1541592",
     "eslint": "^9.39.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-svelte": "^3.13.0",
