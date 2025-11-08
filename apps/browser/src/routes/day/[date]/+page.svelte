@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MarkdownViewer from "$lib/components/MarkdownViewer.svelte";
+  import MarkdownPreview from "$lib/components/summary/MarkdownPreview.svelte";
   import AppHeader from "$lib/components/AppHeader.svelte";
   import ThemeSwitcher from "$lib/components/ThemeSwitcher.svelte";
   import {
@@ -32,6 +32,16 @@
   import { resolveSlackPermalink } from "$lib/presentation/slack";
   import { buildClipboardPayload } from "$lib/presentation/clipboard";
   import { copyToClipboard } from "$lib/client/copy";
+  import SummaryWorkspace from "$lib/components/summary/SummaryWorkspace.svelte";
+  import {
+    ensureSummaryEditUrl,
+    initializeSummaryDraft,
+    isSummaryEditMode,
+    loadSummaryDraft,
+    saveSummaryDraft,
+    type SummaryDraftPayload,
+  } from "$lib/client/summary/api";
+  import { formatSummarySavedAt } from "$lib/summary/format";
 
   export let data: PageData;
 
@@ -57,6 +67,33 @@
 
   const deliveredUids = new Set<string>(data.events.map((event) => event.uid));
 
+  type SummaryDraftState = {
+    loading: boolean;
+    saving: boolean;
+    content: string;
+    exists: boolean;
+    updatedAt?: string;
+    error: string | null;
+    lastSavedAt?: string | null;
+  };
+
+  const summaryDraftState = writable<SummaryDraftState>({
+    loading: false,
+    saving: false,
+    content: data.summary ?? "",
+    exists: Boolean(data.summary),
+    updatedAt: undefined,
+    error: null,
+    lastSavedAt: null,
+  });
+  let summaryFetchPromise: Promise<void> | null = null;
+  let summaryActionPending = false;
+  const llmModels = ["gpt-4.1-mini", "gpt-4o"];
+  let activeModel = llmModels[0] ?? "";
+  $: summarySavedLabel = formatSummarySavedAt(
+    $summaryDraftState.lastSavedAt ?? $summaryDraftState.updatedAt ?? null
+  );
+
   const unsubscribeEvents = events.subscribe((value) => {
     lastUpdated = formatIsoTimestamp(computeLastTimestamp(value, data.date));
   });
@@ -68,6 +105,14 @@
 
   const toastVisible = writable(false);
   const toastMessage = writable("更新があります");
+
+  const isSummaryEditing = derived(page, ($page) => isSummaryEditMode($page.url));
+
+  const unsubscribeSummaryMode = isSummaryEditing.subscribe((editing) => {
+    if (editing) {
+      void ensureSummaryDraftLoaded();
+    }
+  });
 
   onMount(() => {
     if (!browser) {
@@ -111,6 +156,7 @@
   onDestroy(() => {
     unsubscribeSelection();
     unsubscribeEvents();
+    unsubscribeSummaryMode();
     eventSource?.close();
     stopFallback();
     if (copyTimer) {
@@ -297,6 +343,137 @@
 
   const slackPermalink = (event: TimelineEvent) =>
     resolveSlackPermalink(event, slackWorkspaceBaseUrl);
+
+  async function ensureSummaryDraftLoaded(force = false): Promise<void> {
+    const state = get(summaryDraftState);
+    if (!force && (state.loading || summaryFetchPromise)) {
+      await summaryFetchPromise;
+      return;
+    }
+    summaryFetchPromise = (async () => {
+      summaryDraftState.update((current) => ({
+        ...current,
+        loading: true,
+        error: null,
+      }));
+      try {
+        const payload = await loadSummaryDraft(data.date);
+        applySummaryPayload(payload);
+      } catch (error) {
+        console.error("loadSummaryDraft failed", error);
+        summaryDraftState.update((current) => ({
+          ...current,
+          loading: false,
+          saving: false,
+          error: error instanceof Error ? error.message : "サマリの取得に失敗しました",
+        }));
+      }
+    })()
+      .catch(() => {
+        // errors handled above
+      })
+      .finally(() => {
+        summaryFetchPromise = null;
+      });
+    await summaryFetchPromise;
+  }
+
+  async function startSummaryCreation(): Promise<void> {
+    if (summaryActionPending) {
+      return;
+    }
+    summaryActionPending = true;
+    try {
+      summaryDraftState.update((current) => ({
+        ...current,
+        loading: true,
+        error: null,
+      }));
+      const payload = await initializeSummaryDraft(data.date);
+      applySummaryPayload(payload);
+      await navigateToSummaryEditor();
+    } catch (error) {
+      console.error("startSummaryCreation failed", error);
+      summaryDraftState.update((current) => ({
+        ...current,
+        loading: false,
+        error: error instanceof Error ? error.message : "サマリの初期化に失敗しました",
+      }));
+    } finally {
+      summaryActionPending = false;
+    }
+  }
+
+  async function navigateToSummaryEditor(): Promise<void> {
+    const current = get(page);
+    if (!isSummaryEditMode(current.url)) {
+      const target = ensureSummaryEditUrl(current.url);
+      await goto(target, {
+        replaceState: true,
+        keepFocus: true,
+        noScroll: true,
+      });
+      return;
+    }
+    await ensureSummaryDraftLoaded(true);
+  }
+
+  function applySummaryPayload(payload: SummaryDraftPayload): void {
+    summaryDraftState.set({
+      loading: false,
+      saving: false,
+      content: payload.content ?? "",
+      exists: Boolean(payload.exists),
+      updatedAt: payload.updatedAt,
+      error: null,
+      lastSavedAt: payload.updatedAt ?? null,
+    });
+  }
+
+  function handleWorkspaceModelChange(event: CustomEvent<{ model: string }>) {
+    activeModel = event.detail.model;
+  }
+
+  function handleWorkspaceDraftInput(event: CustomEvent<{ content: string }>) {
+    summaryDraftState.update((current) => ({
+      ...current,
+      content: event.detail.content,
+    }));
+  }
+
+  function handleWorkspaceDraftSave(event: CustomEvent<{ content: string }>) {
+    void saveDraft(event.detail.content);
+  }
+
+  async function saveDraft(content: string): Promise<void> {
+    summaryDraftState.update((current) => ({
+      ...current,
+      saving: true,
+      error: null,
+      content,
+    }));
+    try {
+      const result = await saveSummaryDraft(data.date, { content });
+      summaryDraftState.update((current) => ({
+        ...current,
+        saving: false,
+        exists: true,
+        updatedAt: result.savedAt,
+        lastSavedAt: result.savedAt,
+      }));
+      toastMessage.set("サマリを保存しました。");
+      toastVisible.set(true);
+    } catch (error) {
+      console.error("saveSummaryDraft failed", error);
+      summaryDraftState.update((current) => ({
+        ...current,
+        saving: false,
+        error: error instanceof Error ? error.message : "サマリの保存に失敗しました",
+      }));
+      toastMessage.set("サマリの保存に失敗しました。");
+      toastVisible.set(true);
+    }
+  }
 </script>
 
 <svelte:head>
@@ -312,6 +489,16 @@
     </svelte:fragment>
     <svelte:fragment slot="actions">
       <ThemeSwitcher selectId="timeline-theme" />
+      <div class="summary-actions">
+        <button
+          type="button"
+          class="summary-create-button"
+          on:click={startSummaryCreation}
+          disabled={summaryActionPending}
+        >
+          サマリを作成
+        </button>
+      </div>
       <div class="clipboard-controls">
         <button type="button" class="clipboard-button" on:click={handleCopyAll}>
           LLM 用にコピー
@@ -331,6 +518,30 @@
       </div>
     </svelte:fragment>
   </AppHeader>
+
+  {#if $isSummaryEditing}
+    <section class="summary-workspace-section">
+      <SummaryWorkspace
+        draft={{
+          date: data.date,
+          content: $summaryDraftState.content,
+          updatedAt: $summaryDraftState.updatedAt,
+        }}
+        models={llmModels}
+        {activeModel}
+        isEditorBusy={$summaryDraftState.loading || $summaryDraftState.saving}
+        lastSavedAt={$summaryDraftState.lastSavedAt ?? null}
+        lastSavedLabel={summarySavedLabel}
+        errorMessage={$summaryDraftState.error}
+        on:modelchange={handleWorkspaceModelChange}
+        on:draftinput={handleWorkspaceDraftInput}
+        on:draftsave={handleWorkspaceDraftSave}
+      />
+      {#if $summaryDraftState.error}
+        <p class="summary-error" role="alert">{$summaryDraftState.error}</p>
+      {/if}
+    </section>
+  {/if}
 
   <section class="filters">
     <h2>ソースフィルタ</h2>
@@ -404,10 +615,10 @@
       {/if}
     </div>
 
-    {#if data.summary}
+    {#if !$isSummaryEditing && data.summary}
       <aside class="summary">
         <h2>Markdown サマリ</h2>
-        <MarkdownViewer markdown={data.summary} />
+        <MarkdownPreview markdown={data.summary} debounce={0} />
       </aside>
     {/if}
   </section>
@@ -451,6 +662,26 @@
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+
+  .summary-actions {
+    display: flex;
+    align-items: center;
+  }
+
+  .summary-create-button {
+    border: none;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+  }
+
+  .summary-create-button:disabled {
+    opacity: 0.6;
+    cursor: progress;
   }
 
   .clipboard-button {
@@ -507,6 +738,18 @@
     border-radius: 12px;
     padding: 1rem 1.5rem;
     background: var(--surface-card);
+  }
+
+  .summary-workspace-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .summary-error {
+    color: #ef4444;
+    font-size: 0.85rem;
+    margin: 0;
   }
 
   .source-form {

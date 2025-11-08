@@ -1,0 +1,150 @@
+.summary-workspace {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr) 360px;
+  gap: 1.5rem;
+  width: 100%;
+  align-items: stretch;
+}
+
+.summary-workspace .pane {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border-strong);
+  border-radius: 12px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.summary-workspace .pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.summary-workspace .pane-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.summary-workspace .model-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.summary-workspace .model-selector select {
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--surface-border-strong);
+}
+
+.summary-workspace .prompt-input {
+  min-height: 8rem;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.9rem;
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--surface-border);
+}
+
+.summary-workspace .prompt-submit {
+  align-self: flex-end;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  padding: 0.45rem 1.2rem;
+  cursor: pointer;
+}
+
+.summary-workspace .prompt-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.summary-workspace .suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.summary-workspace .suggestions h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.summary-workspace .suggestions ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.summary-workspace .suggestions li {
+  border: 1px solid var(--surface-border);
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+  background: var(--surface-base);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.summary-workspace .suggestions pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.summary-workspace .suggestion-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.summary-workspace .suggestion-actions button {
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.9rem;
+  cursor: pointer;
+}
+
+.summary-workspace .suggestion-actions button:hover {
+  opacity: 0.9;
+}
+
+.summary-workspace .status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.summary-workspace .status {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.summary-workspace .status.saved-at {
+  color: var(--text-secondary);
+}
+
+.summary-workspace .status.error {
+  color: #ef4444;
+}
+
+.summary-workspace .preview-body {
+  flex: 1;
+  overflow: auto;
+}

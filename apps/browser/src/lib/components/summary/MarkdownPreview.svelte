@@ -1,13 +1,27 @@
 <script lang="ts">
-  import { renderSummaryMarkdown } from "$lib/markdown";
+  import { onDestroy } from "svelte";
+  import { createMarkdownPipeline } from "$lib/preview/markdownPipeline";
 
   export let markdown: string | null = null;
+  export let debounce = 300;
 
-  $: rendered = markdown ? renderSummaryMarkdown(markdown) : "";
+  const pipeline = createMarkdownPipeline({ debounce });
+  let rendered: string | null = null;
+
+  const unsubscribe = pipeline.subscribe((value) => {
+    rendered = value;
+  });
+
+  $: pipeline.update(markdown ?? null);
+
+  onDestroy(() => {
+    unsubscribe();
+    pipeline.destroy();
+  });
 </script>
 
 {#if rendered}
-  <div class="markdown">{@html rendered}</div>
+  <div class="markdown" data-testid="markdown-preview">{@html rendered}</div>
 {:else}
   <p class="placeholder">サマリがまだありません。</p>
 {/if}
