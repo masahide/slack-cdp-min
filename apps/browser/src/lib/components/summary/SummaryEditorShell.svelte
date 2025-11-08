@@ -92,9 +92,7 @@
 
 <div class="summary-editor-shell" data-testid="summary-editor-shell">
   <header class="shell-header">
-    <h1 class="shell-title">
-      日報サマリ <span aria-label="target-date">{draft?.date ?? "未設定"}</span>
-    </h1>
+    <h2 class="shell-title">サマリ編集</h2>
     <div class="shell-actions">
       <button type="button" on:click={handleCreate} disabled={isBusy}> サマリを作成 </button>
       <button type="button" on:click={handleSave} disabled={isBusy}> 保存 </button>
@@ -151,7 +149,7 @@
   }
 
   .summary-input {
-    min-height: 12rem;
+    min-height: 50rem;
     font-family: var(--font-mono, ui-monospace);
     font-size: 0.95rem;
     padding: 0.75rem;

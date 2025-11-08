@@ -2,6 +2,8 @@ export type SummaryDraftPayload = {
   content: string;
   exists: boolean;
   updatedAt?: string;
+  assistantMessage?: string | null;
+  reasoning?: string | null;
 };
 
 const DEFAULT_HEADERS = {
@@ -55,7 +57,13 @@ function normalize(raw: unknown): SummaryDraftPayload {
   const content = typeof data.content === "string" ? data.content : "";
   const exists = Boolean(data.exists);
   const updatedAt = typeof data.updatedAt === "string" ? data.updatedAt : undefined;
-  return { content, exists, updatedAt };
+  const assistantMessage =
+    typeof data.assistantMessage === "string" && data.assistantMessage.trim().length > 0
+      ? data.assistantMessage
+      : null;
+  const reasoning =
+    typeof data.reasoning === "string" && data.reasoning.trim().length > 0 ? data.reasoning : null;
+  return { content, exists, updatedAt, assistantMessage, reasoning };
 }
 
 export async function saveSummaryDraft(

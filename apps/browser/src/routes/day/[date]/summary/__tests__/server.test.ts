@@ -92,6 +92,8 @@ describe("routes/day/[date]/summary", () => {
     expect(summary.content).toBe("# 更新後\n\n- 追記");
     expect(summary.exists).toBe(true);
     expect(summary.updatedAt).toBe(payload.savedAt);
+    expect(summary.assistantMessage ?? null).toBeNull();
+    expect(summary.reasoning ?? null).toBeNull();
   });
 
   it("POST でサマリを初期化すると存在フラグ付きで返す", async () => {
@@ -115,6 +117,8 @@ describe("routes/day/[date]/summary", () => {
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.exists).toBe(true);
     expect(typeof body.updatedAt === "string").toBe(true);
+    expect(body.assistantMessage ?? null).toBeNull();
+    expect(body.reasoning ?? null).toBeNull();
   });
 
   it("サマリが存在しない場合でも空稿を返す", async () => {
@@ -138,6 +142,39 @@ describe("routes/day/[date]/summary", () => {
     expect(body.exists).toBe(false);
     expect(body.content).toBe("");
     expect(body.updatedAt).toBeNull();
+    expect(body.assistantMessage ?? null).toBeNull();
+    expect(body.reasoning ?? null).toBeNull();
+  });
+
+  it("サマリが存在しない場合は初期コンテンツを生成する", async () => {
+    const [year, month, day] = TARGET_DATE.split("-");
+    const summaryPath = join(dataDir, year, month, day, "summaries", "daily.md");
+    rmSync(summaryPath, { force: true });
+
+    const request = new Request(`http://example.test/day/${TARGET_DATE}/summary`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    const response = await POST({
+      params: { date: TARGET_DATE },
+      locals: {},
+      fetch,
+      request,
+      setHeaders: vi.fn(),
+      url: new URL(request.url),
+    } as never);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.exists).toBe(true);
+    expect(typeof body.updatedAt === "string").toBe(true);
+    expect(typeof body.content === "string").toBe(true);
+    expect((body.content as string).length).toBeGreaterThan(0);
+    expect(body.content).toContain("# ReacLog 日報");
+    expect(body.content).toContain("## TODO / ブロッカー");
   });
 
   it("存在しない日付へのアクセスは 400", async () => {

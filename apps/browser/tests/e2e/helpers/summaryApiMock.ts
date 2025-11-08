@@ -86,6 +86,7 @@ export function createSummaryApiMock(date: string): SummaryApiMock {
         model: readString(payload, "model"),
         prompt: readString(payload, "prompt"),
         content: readString(payload, "content"),
+        date: readOptionalString(payload, "date") ?? "",
         previousResponseId: readOptionalString(payload, "previousResponseId"),
         selection: parseSelection(payload.selection),
       });

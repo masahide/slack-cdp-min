@@ -76,6 +76,8 @@
     updatedAt?: string;
     error: string | null;
     lastSavedAt?: string | null;
+    assistantMessage: string | null;
+    reasoning: string | null;
   };
 
   const summaryDraftState = writable<SummaryDraftState>({
@@ -86,6 +88,8 @@
     updatedAt: undefined,
     error: null,
     lastSavedAt: null,
+    assistantMessage: null,
+    reasoning: null,
   });
   let summaryFetchPromise: Promise<void> | null = null;
   let summaryActionPending = false;
@@ -347,6 +351,9 @@
     resolveSlackPermalink(event, slackWorkspaceBaseUrl);
 
   async function ensureSummaryDraftLoaded(force = false): Promise<void> {
+    if (!browser) {
+      return;
+    }
     const state = get(summaryDraftState);
     if (!force && (state.loading || summaryFetchPromise)) {
       await summaryFetchPromise;
@@ -393,7 +400,9 @@
       }));
       const payload = await initializeSummaryDraft(data.date);
       applySummaryPayload(payload);
-      await navigateToSummaryEditor();
+      if (!get(isSummaryEditing)) {
+        await navigateToSummaryEditor();
+      }
     } catch (error) {
       console.error("startSummaryCreation failed", error);
       summaryDraftState.update((current) => ({
@@ -420,6 +429,21 @@
     await ensureSummaryDraftLoaded(true);
   }
 
+  async function exitSummaryEditing(): Promise<void> {
+    const current = get(page);
+    if (!isSummaryEditMode(current.url)) {
+      return;
+    }
+    const params = new URLSearchParams(current.url.search);
+    params.delete("summary");
+    const query = params.toString();
+    await goto(`${current.url.pathname}${query ? `?${query}` : ""}`, {
+      replaceState: true,
+      keepFocus: true,
+      noScroll: true,
+    });
+  }
+
   function applySummaryPayload(payload: SummaryDraftPayload): void {
     summaryDraftState.set({
       loading: false,
@@ -429,6 +453,8 @@
       updatedAt: payload.updatedAt,
       error: null,
       lastSavedAt: payload.updatedAt ?? null,
+      assistantMessage: payload.assistantMessage ?? null,
+      reasoning: payload.reasoning ?? null,
     });
   }
 
@@ -449,6 +475,14 @@
 
   function handleWorkspaceDraftCreate() {
     void startSummaryCreation();
+  }
+
+  function handleAssistantDismiss() {
+    summaryDraftState.update((current) => ({
+      ...current,
+      assistantMessage: null,
+      reasoning: null,
+    }));
   }
 
   async function saveDraft(content: string): Promise<void> {
@@ -486,25 +520,45 @@
   <title>{dateLabel} のログ</title>
 </svelte:head>
 
-<main class="layout">
+<main class="layout" class:layout-summary-edit={$isSummaryEditing}>
   <AppHeader>
     <svelte:fragment slot="main">
       <a class="back-link" href="/">← ダッシュボードに戻る</a>
-      <h1>{dateLabel} のログ</h1>
-      <p class="updated-at">最終記録: {lastUpdated}</p>
+      {#if $isSummaryEditing}
+        <h1>日報サマリ {dateLabel}</h1>
+        <p class="updated-at summary-saved">
+          {#if summarySavedLabel}
+            サマリ最終保存: {summarySavedLabel}
+          {:else}
+            サマリ未保存
+          {/if}
+        </p>
+        <p class="updated-at timeline-updated">タイムライン最終記録: {lastUpdated}</p>
+      {:else}
+        <h1>{dateLabel} のログ</h1>
+        <p class="updated-at">最終記録: {lastUpdated}</p>
+      {/if}
     </svelte:fragment>
     <svelte:fragment slot="actions">
       <ThemeSwitcher selectId="timeline-theme" />
-      <div class="summary-actions">
-        <button
-          type="button"
-          class="summary-create-button"
-          on:click={startSummaryCreation}
-          disabled={summaryActionPending}
-        >
-          サマリを作成
-        </button>
-      </div>
+      {#if $isSummaryEditing}
+        <div class="summary-actions">
+          <button type="button" class="summary-exit-button" on:click={exitSummaryEditing}>
+            閲覧モードに戻る
+          </button>
+        </div>
+      {:else}
+        <div class="summary-actions">
+          <button
+            type="button"
+            class="summary-create-button"
+            on:click={startSummaryCreation}
+            disabled={summaryActionPending}
+          >
+            サマリを作成
+          </button>
+        </div>
+      {/if}
       <div class="clipboard-controls">
         <button type="button" class="clipboard-button" on:click={handleCopyAll}>
           LLM 用にコピー
@@ -526,12 +580,14 @@
   </AppHeader>
 
   {#if $isSummaryEditing}
-    <section class="summary-workspace-section">
+    <section class="summary-edit-container">
       <SummaryWorkspace
         draft={{
           date: data.date,
           content: $summaryDraftState.content,
           updatedAt: $summaryDraftState.updatedAt,
+          assistantMessage: $summaryDraftState.assistantMessage,
+          reasoning: $summaryDraftState.reasoning,
         }}
         models={llmModels}
         {activeModel}
@@ -543,92 +599,93 @@
         on:draftinput={handleWorkspaceDraftInput}
         on:draftsave={handleWorkspaceDraftSave}
         on:draftcreate={handleWorkspaceDraftCreate}
+        on:assistantdismiss={handleAssistantDismiss}
       />
       {#if $summaryDraftState.error}
         <p class="summary-error" role="alert">{$summaryDraftState.error}</p>
       {/if}
     </section>
-  {/if}
-
-  <section class="filters">
-    <h2>ソースフィルタ</h2>
-    {#if $sourcesStore.length === 0}
-      <p class="empty">この日に取得されたイベントはありません。</p>
-    {:else}
-      <form method="get" class="source-form" on:submit|preventDefault>
-        {#each $sourcesStore as source}
-          <label class="source-option">
-            <input
-              type="checkbox"
-              name="source"
-              value={source.name}
-              checked={isSelected(source.name, $selectedSources)}
-              on:change={(event) => toggleSource(source.name, event.currentTarget.checked)}
-            />
-            <span class="name">{source.name}</span>
-            <span class="count">({source.count})</span>
-          </label>
-        {/each}
-      </form>
-    {/if}
-  </section>
-
-  <section class="content">
-    <div class="timeline">
-      <h2>タイムライン</h2>
-      {#if $filteredEvents.length === 0}
-        <p class="empty">表示対象のイベントがありません。</p>
+  {:else}
+    <section class="filters">
+      <h2>ソースフィルタ</h2>
+      {#if $sourcesStore.length === 0}
+        <p class="empty">この日に取得されたイベントはありません。</p>
       {:else}
-        <ul>
-          {#each $filteredEvents as event}
-            {@const permalink = slackPermalink(event)}
-            <li class="timeline-item">
-              <div class="time">{formatEventTime(event.loggedAt ?? event.ts, data.date)}</div>
-              <div class="body">
-                <div class="meta-line">
-                  <span class={`source-tag kind-${classifyEventKind(event)}`}>
-                    {displayBadge(event)}
-                  </span>
-                  {#if getEventChannelLabel(event)}
-                    <span class="channel-tag">{getEventChannelLabel(event)}</span>
-                  {/if}
-                  {#if event.ts}
-                    <time class="timestamp original" datetime={event.ts}>
-                      投稿 {formatEventTimestampJstIso(event.ts, data.date)}
-                    </time>
-                  {/if}
-                  {#if permalink}
-                    <a
-                      class="timeline-permalink"
-                      href={permalink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Slackで開く
-                    </a>
-                  {/if}
-                </div>
-                <div class="description" aria-label={`本文: ${describeEvent(event)}`}>
-                  {@html renderEventContent(event)}
-                </div>
-                <details>
-                  <summary>詳細</summary>
-                  <pre>{JSON.stringify(event.raw, null, 2)}</pre>
-                </details>
-              </div>
-            </li>
+        <form method="get" class="source-form" on:submit|preventDefault>
+          {#each $sourcesStore as source}
+            <label class="source-option">
+              <input
+                type="checkbox"
+                name="source"
+                value={source.name}
+                checked={isSelected(source.name, $selectedSources)}
+                on:change={(event) => toggleSource(source.name, event.currentTarget.checked)}
+              />
+              <span class="name">{source.name}</span>
+              <span class="count">({source.count})</span>
+            </label>
           {/each}
-        </ul>
+        </form>
       {/if}
-    </div>
+    </section>
 
-    {#if !$isSummaryEditing && data.summary !== null}
-      <aside class="summary">
-        <h2>Markdown サマリ</h2>
-        <MarkdownPreview markdown={data.summary ?? ""} debounce={0} />
-      </aside>
-    {/if}
-  </section>
+    <section class="content">
+      <div class="timeline">
+        <h2>タイムライン</h2>
+        {#if $filteredEvents.length === 0}
+          <p class="empty">表示対象のイベントがありません。</p>
+        {:else}
+          <ul>
+            {#each $filteredEvents as event}
+              {@const permalink = slackPermalink(event)}
+              <li class="timeline-item">
+                <div class="time">{formatEventTime(event.loggedAt ?? event.ts, data.date)}</div>
+                <div class="body">
+                  <div class="meta-line">
+                    <span class={`source-tag kind-${classifyEventKind(event)}`}>
+                      {displayBadge(event)}
+                    </span>
+                    {#if getEventChannelLabel(event)}
+                      <span class="channel-tag">{getEventChannelLabel(event)}</span>
+                    {/if}
+                    {#if event.ts}
+                      <time class="timestamp original" datetime={event.ts}>
+                        投稿 {formatEventTimestampJstIso(event.ts, data.date)}
+                      </time>
+                    {/if}
+                    {#if permalink}
+                      <a
+                        class="timeline-permalink"
+                        href={permalink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Slackで開く
+                      </a>
+                    {/if}
+                  </div>
+                  <div class="description" aria-label={`本文: ${describeEvent(event)}`}>
+                    {@html renderEventContent(event)}
+                  </div>
+                  <details>
+                    <summary>詳細</summary>
+                    <pre>{JSON.stringify(event.raw, null, 2)}</pre>
+                  </details>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+
+      {#if data.summary !== null}
+        <aside class="summary">
+          <h2>Markdown サマリ</h2>
+          <MarkdownPreview markdown={data.summary ?? ""} debounce={0} />
+        </aside>
+      {/if}
+    </section>
+  {/if}
 
   <UpdateToast
     visible={$toastVisible}
@@ -674,6 +731,20 @@
   .summary-actions {
     display: flex;
     align-items: center;
+  }
+
+  .summary-exit-button {
+    border: 1px solid var(--surface-border-strong);
+    border-radius: 999px;
+    background: var(--surface-card);
+    color: var(--text-primary);
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+  }
+
+  .summary-exit-button:hover {
+    background: var(--surface-border-muted);
   }
 
   .summary-create-button {
@@ -745,12 +816,6 @@
     border-radius: 12px;
     padding: 1rem 1.5rem;
     background: var(--surface-card);
-  }
-
-  .summary-workspace-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
   }
 
   .summary-error {
@@ -935,5 +1000,20 @@
 
   .empty {
     color: var(--text-secondary);
+  }
+
+  .layout-summary-edit {
+    max-width: 1600px;
+    width: min(100%, 1600px);
+  }
+
+  .layout-summary-edit .summary-edit-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .layout-summary-edit .summary-error {
+    margin-top: 0;
   }
 </style>

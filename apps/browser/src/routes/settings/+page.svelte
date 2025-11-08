@@ -4,56 +4,150 @@
 
   export let data: PageData;
 
-  let templateSource = data.clipboardTemplate.source;
-  let baselineSource = data.clipboardTemplate.source;
-  const defaultSource = data.clipboardTemplate.defaultSource;
-  let origin = data.clipboardTemplate.origin;
-  let path = data.clipboardTemplate.path;
-  let status: "idle" | "saving" | "success" | "error" | "resetting" = "idle";
-  let errorMessage: string | null = null;
+  // Summary prompt templates
+  let systemPromptSource = data.summaryPrompts.system.source;
+  let userPromptSource = data.summaryPrompts.user.source;
+  const defaultSystemPrompt = data.summaryPrompts.system.defaultSource;
+  const defaultUserPrompt = data.summaryPrompts.user.defaultSource;
+  let systemOrigin = data.summaryPrompts.system.origin;
+  let userOrigin = data.summaryPrompts.user.origin;
+  let systemPath = data.summaryPrompts.system.path;
+  let userPath = data.summaryPrompts.user.path;
+  let promptBaselineSystem = systemPromptSource;
+  let promptBaselineUser = userPromptSource;
+  let promptStatus: "idle" | "saving" | "success" | "error" | "resetting" = "idle";
+  let promptError: string | null = null;
 
-  $: isDirty = templateSource !== baselineSource;
+  $: isPromptDirty =
+    systemPromptSource !== promptBaselineSystem || userPromptSource !== promptBaselineUser;
 
-  async function saveTemplate() {
+  // Clipboard template (existing behaviour)
+  let clipboardSource = data.clipboardTemplate.source;
+  let clipboardBaseline = data.clipboardTemplate.source;
+  const clipboardDefault = data.clipboardTemplate.defaultSource;
+  let clipboardOrigin = data.clipboardTemplate.origin;
+  let clipboardPath = data.clipboardTemplate.path;
+  let clipboardStatus: "idle" | "saving" | "success" | "error" | "resetting" = "idle";
+  let clipboardError: string | null = null;
+
+  $: isClipboardDirty = clipboardSource !== clipboardBaseline;
+
+  async function savePromptTemplates() {
     if (!browser) return;
-    status = "saving";
-    errorMessage = null;
+    promptStatus = "saving";
+    promptError = null;
+    try {
+      const response = await fetch("/api/templates/summary", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemPrompt: systemPromptSource,
+          userPrompt: userPromptSource,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`保存に失敗しました (${response.status})`);
+      }
+      const payload = (await response.json()) as PageData["summaryPrompts"];
+      systemPromptSource = payload.system.source;
+      userPromptSource = payload.user.source;
+      systemOrigin = payload.system.origin;
+      userOrigin = payload.user.origin;
+      systemPath = payload.system.path;
+      userPath = payload.user.path;
+      promptBaselineSystem = payload.system.source;
+      promptBaselineUser = payload.user.source;
+      promptStatus = "success";
+    } catch (error) {
+      console.error("サマリプロンプト保存エラー", error);
+      promptStatus = "error";
+      promptError = error instanceof Error ? error.message : "不明なエラーが発生しました";
+    } finally {
+      if (promptStatus === "success") {
+        setTimeout(() => {
+          promptStatus = "idle";
+        }, 2000);
+      }
+    }
+  }
+
+  async function resetPromptTemplates() {
+    if (!browser) return;
+    promptStatus = "resetting";
+    promptError = null;
+    try {
+      const response = await fetch("/api/templates/summary", { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error(`リセットに失敗しました (${response.status})`);
+      }
+      const payload = (await response.json()) as PageData["summaryPrompts"];
+      systemPromptSource = payload.system.source;
+      userPromptSource = payload.user.source;
+      systemOrigin = payload.system.origin;
+      userOrigin = payload.user.origin;
+      systemPath = payload.system.path;
+      userPath = payload.user.path;
+      promptBaselineSystem = payload.system.source;
+      promptBaselineUser = payload.user.source;
+      promptStatus = "success";
+    } catch (error) {
+      console.error("サマリプロンプトリセットエラー", error);
+      promptStatus = "error";
+      promptError = error instanceof Error ? error.message : "不明なエラーが発生しました";
+    } finally {
+      if (promptStatus === "success") {
+        setTimeout(() => {
+          promptStatus = "idle";
+        }, 2000);
+      }
+    }
+  }
+
+  function loadPromptDefaults() {
+    systemPromptSource = defaultSystemPrompt;
+    userPromptSource = defaultUserPrompt;
+  }
+
+  async function saveClipboardTemplate() {
+    if (!browser) return;
+    clipboardStatus = "saving";
+    clipboardError = null;
     try {
       const response = await fetch("/api/templates/clipboard", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: templateSource }),
+        body: JSON.stringify({ source: clipboardSource }),
       });
       if (!response.ok) {
         throw new Error(`保存に失敗しました (${response.status})`);
       }
       const payload = (await response.json()) as {
         source: string;
-        origin: typeof origin;
+        origin: typeof clipboardOrigin;
         path: string | null;
       };
-      templateSource = payload.source;
-      baselineSource = payload.source;
-      origin = payload.origin;
-      path = payload.path;
-      status = "success";
+      clipboardSource = payload.source;
+      clipboardBaseline = payload.source;
+      clipboardOrigin = payload.origin;
+      clipboardPath = payload.path;
+      clipboardStatus = "success";
     } catch (error) {
-      console.error("テンプレート保存エラー", error);
-      status = "error";
-      errorMessage = error instanceof Error ? error.message : "不明なエラーが発生しました";
+      console.error("クリップボードテンプレート保存エラー", error);
+      clipboardStatus = "error";
+      clipboardError = error instanceof Error ? error.message : "不明なエラーが発生しました";
     } finally {
-      if (status === "success") {
+      if (clipboardStatus === "success") {
         setTimeout(() => {
-          status = "idle";
+          clipboardStatus = "idle";
         }, 2000);
       }
     }
   }
 
-  async function resetTemplate() {
+  async function resetClipboardTemplate() {
     if (!browser) return;
-    status = "resetting";
-    errorMessage = null;
+    clipboardStatus = "resetting";
+    clipboardError = null;
     try {
       const response = await fetch("/api/templates/clipboard", { method: "DELETE" });
       if (!response.ok) {
@@ -61,29 +155,29 @@
       }
       const payload = (await response.json()) as {
         source: string;
-        origin: typeof origin;
+        origin: typeof clipboardOrigin;
         path: string | null;
       };
-      templateSource = payload.source;
-      baselineSource = payload.source;
-      origin = payload.origin;
-      path = payload.path;
-      status = "success";
+      clipboardSource = payload.source;
+      clipboardBaseline = payload.source;
+      clipboardOrigin = payload.origin;
+      clipboardPath = payload.path;
+      clipboardStatus = "success";
     } catch (error) {
-      console.error("テンプレートリセットエラー", error);
-      status = "error";
-      errorMessage = error instanceof Error ? error.message : "不明なエラーが発生しました";
+      console.error("クリップボードテンプレートリセットエラー", error);
+      clipboardStatus = "error";
+      clipboardError = error instanceof Error ? error.message : "不明なエラーが発生しました";
     } finally {
-      if (status === "success") {
+      if (clipboardStatus === "success") {
         setTimeout(() => {
-          status = "idle";
+          clipboardStatus = "idle";
         }, 2000);
       }
     }
   }
 
-  function loadDefaultTemplate() {
-    templateSource = defaultSource;
+  function loadClipboardDefault() {
+    clipboardSource = clipboardDefault;
   }
 </script>
 
@@ -94,19 +188,10 @@
 <main class="page">
   <header class="header">
     <div>
-      <h1>クリップボードテンプレート</h1>
+      <h1>テンプレート編集</h1>
       <p class="lead">
-        クリップボード出力に利用される Handlebars テンプレートを編集できます。保存すると config
-        ディレクトリにカスタムテンプレートが作成されます。
-      </p>
-      <p class="meta">
-        現在の状態:
-        <span class={origin === "custom" ? "status custom" : "status default"}>
-          {origin === "custom" ? "カスタム" : "デフォルト"}
-        </span>
-        {#if path}
-          <span class="path">({path})</span>
-        {/if}
+        LLM サマリ生成に利用するプロンプトと、クリップボード出力テンプレートをここで管理します。
+        保存すると config ディレクトリ配下にカスタムテンプレートが作成されます。
       </p>
     </div>
     <nav class="nav">
@@ -115,26 +200,112 @@
   </header>
 
   <section class="editor-section">
+    <h2>サマリ生成プロンプト</h2>
+    <p class="meta">
+      現在の状態:
+      <span
+        class={systemOrigin === "custom" || userOrigin === "custom"
+          ? "status custom"
+          : "status default"}
+      >
+        {systemOrigin === "custom" || userOrigin === "custom" ? "カスタム" : "デフォルト"}
+      </span>
+      {#if systemPath || userPath}
+        <span class="path">
+          {#if systemPath}system: {systemPath}{/if}
+          {#if systemPath && userPath}
+            /
+          {/if}
+          {#if userPath}user: {userPath}{/if}
+        </span>
+      {/if}
+    </p>
     <div class="controls">
-      <button type="button" class="button secondary" on:click={loadDefaultTemplate}>
+      <button type="button" class="button secondary" on:click={loadPromptDefaults}>
         デフォルトを読み込む
       </button>
       <div class="spacer" />
       <button
         type="button"
         class="button danger"
-        on:click={resetTemplate}
-        disabled={status === "saving" || status === "resetting"}
+        on:click={resetPromptTemplates}
+        disabled={promptStatus === "saving" || promptStatus === "resetting"}
       >
         デフォルトに戻す
       </button>
       <button
         type="button"
         class="button primary"
-        on:click={saveTemplate}
-        disabled={!isDirty || status === "saving" || status === "resetting"}
+        on:click={savePromptTemplates}
+        disabled={!isPromptDirty || promptStatus === "saving" || promptStatus === "resetting"}
       >
-        {#if status === "saving"}
+        {#if promptStatus === "saving"}
+          保存中…
+        {:else}
+          保存する
+        {/if}
+      </button>
+    </div>
+    <div class="prompt-editors">
+      <label class="prompt-label">
+        <span>システムプロンプト（instructions）</span>
+        <textarea
+          bind:value={systemPromptSource}
+          spellcheck="false"
+          class="editor"
+          aria-label="System prompt template source"
+        />
+      </label>
+      <label class="prompt-label">
+        <span>ユーザープロンプト（input）</span>
+        <textarea
+          bind:value={userPromptSource}
+          spellcheck="false"
+          class="editor"
+          aria-label="User prompt template source"
+        />
+      </label>
+    </div>
+    {#if promptStatus === "success"}
+      <p class="feedback success">保存しました。</p>
+    {:else if promptStatus === "error"}
+      <p class="feedback error">{promptError ?? "保存に失敗しました。"}</p>
+    {/if}
+  </section>
+
+  <section class="editor-section">
+    <h2>クリップボードテンプレート</h2>
+    <p class="meta">
+      現在の状態:
+      <span class={clipboardOrigin === "custom" ? "status custom" : "status default"}>
+        {clipboardOrigin === "custom" ? "カスタム" : "デフォルト"}
+      </span>
+      {#if clipboardPath}
+        <span class="path">({clipboardPath})</span>
+      {/if}
+    </p>
+    <div class="controls">
+      <button type="button" class="button secondary" on:click={loadClipboardDefault}>
+        デフォルトを読み込む
+      </button>
+      <div class="spacer" />
+      <button
+        type="button"
+        class="button danger"
+        on:click={resetClipboardTemplate}
+        disabled={clipboardStatus === "saving" || clipboardStatus === "resetting"}
+      >
+        デフォルトに戻す
+      </button>
+      <button
+        type="button"
+        class="button primary"
+        on:click={saveClipboardTemplate}
+        disabled={!isClipboardDirty ||
+          clipboardStatus === "saving" ||
+          clipboardStatus === "resetting"}
+      >
+        {#if clipboardStatus === "saving"}
           保存中…
         {:else}
           保存する
@@ -142,15 +313,15 @@
       </button>
     </div>
     <textarea
-      bind:value={templateSource}
+      bind:value={clipboardSource}
       spellcheck="false"
       class="editor"
       aria-label="Clipboard template source"
     />
-    {#if status === "success"}
+    {#if clipboardStatus === "success"}
       <p class="feedback success">保存しました。</p>
-    {:else if status === "error"}
-      <p class="feedback error">{errorMessage ?? "保存に失敗しました。"}</p>
+    {:else if clipboardStatus === "error"}
+      <p class="feedback error">{clipboardError ?? "保存に失敗しました。"}</p>
     {/if}
   </section>
 </main>
@@ -162,7 +333,7 @@
     padding: 2rem;
     display: flex;
     flex-direction: column;
-    gap: 2rem;
+    gap: 2.5rem;
   }
 
   .header {
@@ -179,8 +350,93 @@
     line-height: 1.6;
   }
 
+  .nav-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .editor-section {
+    border: 1px solid var(--surface-border-strong);
+    border-radius: 12px;
+    padding: 1.5rem;
+    background: var(--surface-card);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .spacer {
+    flex: 1;
+  }
+
+  .button {
+    border: none;
+    border-radius: 999px;
+    padding: 0.4rem 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+
+  .button.primary {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .button.secondary {
+    background: var(--button-muted-bg);
+    color: var(--button-muted-text);
+  }
+
+  .button.danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: #b91c1c;
+  }
+
+  .button:disabled {
+    opacity: 0.6;
+    cursor: progress;
+  }
+
+  .prompt-editors {
+    display: grid;
+    gap: 1rem;
+  }
+
+  @media (min-width: 720px) {
+    .prompt-editors {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  .prompt-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .editor {
+    min-height: 12rem;
+    font-family: var(--font-mono, ui-monospace);
+    font-size: 0.9rem;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--surface-border-strong);
+    background: var(--surface-body);
+    color: inherit;
+    resize: vertical;
+  }
+
   .meta {
-    margin-top: 0.5rem;
+    margin: 0;
     color: var(--text-secondary);
     font-size: 0.9rem;
   }
@@ -199,122 +455,20 @@
 
   .path {
     margin-left: 0.5rem;
-    font-family: "Fira Code", "Roboto Mono", monospace;
-    background: var(--inline-code-bg);
-    color: var(--inline-code-text);
-    padding: 0.1rem 0.35rem;
-    border-radius: 0.35rem;
-  }
-
-  .nav {
-    display: flex;
-    align-items: center;
-  }
-
-  .nav-link {
-    color: var(--accent);
-    text-decoration: none;
-    font-weight: 600;
-  }
-
-  .editor-section {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .controls {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .spacer {
-    flex-grow: 1;
-  }
-
-  .editor {
-    width: 100%;
-    min-height: 420px;
-    font-family:
-      "Fira Code", "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      "Liberation Mono", "Courier New", monospace;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    padding: 1rem;
-    border: 1px solid var(--surface-border-strong);
-    border-radius: 0.75rem;
-    background: var(--surface-card);
-    color: var(--text-primary);
-    resize: vertical;
-  }
-
-  .editor:focus {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+    font-family: var(--font-mono, ui-monospace);
+    font-size: 0.8rem;
   }
 
   .feedback {
+    font-size: 0.85rem;
     margin: 0;
-    font-size: 0.9rem;
   }
 
   .feedback.success {
-    color: var(--accent);
+    color: #10b981;
   }
 
   .feedback.error {
     color: #ef4444;
-  }
-
-  .button {
-    border-radius: 999px;
-    padding: 0.5rem 1.2rem;
-    font-size: 0.9rem;
-    border: none;
-    cursor: pointer;
-    transition:
-      background 0.2s ease,
-      transform 0.2s ease;
-  }
-
-  .button:hover:not(:disabled) {
-    transform: translateY(-1px);
-  }
-
-  .button:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-
-  .button.primary {
-    background: var(--accent);
-    color: #ffffff;
-  }
-
-  .button.secondary {
-    background: var(--button-muted-bg);
-    color: var(--button-muted-text);
-  }
-
-  .button.danger {
-    background: #ef4444;
-    color: #ffffff;
-  }
-
-  @media (max-width: 640px) {
-    .controls {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .spacer {
-      display: none;
-    }
-
-    .button {
-      width: 100%;
-    }
   }
 </style>

@@ -4,6 +4,8 @@ export type SummaryDraft = {
   date: string;
   content: string;
   updatedAt: string;
+  assistantMessage?: string | null;
+  reasoning?: string | null;
 };
 
 export type SummaryEditorApiStubs = {
@@ -12,7 +14,14 @@ export type SummaryEditorApiStubs = {
     (payload: { date: string; content: string }) => Promise<{ ok: boolean; savedAt: string }>
   >;
   requestSuggestion: Mock<
-    (payload: { model: string; content: string; previousResponseId?: string | null }) => Promise<{
+    (payload: {
+      model: string;
+      content: string;
+      prompt?: string;
+      date: string;
+      previousResponseId?: string | null;
+      selection?: unknown;
+    }) => Promise<{
       summaryUpdate: { mode: "append" | "replace" | "none"; content: string };
       assistantMessage: string;
       reasoning: string | null;
@@ -27,6 +36,8 @@ export function createSummaryDraft(overrides: Partial<SummaryDraft> = {}): Summa
     date: "2025-11-03",
     content: "## ダミーサマリ\n- 最初のエントリ",
     updatedAt: now,
+    assistantMessage: null,
+    reasoning: null,
     ...overrides,
   };
 }

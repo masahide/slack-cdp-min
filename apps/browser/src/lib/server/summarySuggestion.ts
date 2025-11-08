@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { zodResponseFormat } from "openai/helpers/zod";
+import { zodTextFormat } from "openai/helpers/zod";
 
 export type SummaryUpdateMode = "replace" | "append" | "none";
 
@@ -22,7 +22,7 @@ const SummarySuggestionRawSchema = z.object({
 });
 
 export function buildSummarySuggestionResponseFormat() {
-  return zodResponseFormat(SummarySuggestionRawSchema, "SummarySuggestion");
+  return zodTextFormat(SummarySuggestionRawSchema, "SummarySuggestion");
 }
 
 export function parseSummarySuggestionText(text: string): SummarySuggestionResult {

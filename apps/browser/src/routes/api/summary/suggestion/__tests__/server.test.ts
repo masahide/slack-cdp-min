@@ -1,3 +1,4 @@
+import OpenAI from "openai";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 import { POST } from "../+server";
@@ -14,7 +15,7 @@ vi.mock("$lib/server/openai", () => ({
       responses: {
         create: createResponseMock,
       },
-    }),
+    } as unknown as OpenAI),
 }));
 
 describe("POST /api/summary/suggestion", () => {
@@ -55,6 +56,7 @@ describe("POST /api/summary/suggestion", () => {
         model: "gpt-4.1-mini",
         prompt: "改善点を提案してください",
         content: "# Summary",
+        date: "2025-11-03",
         selection: {
           start: 0,
           end: 8,
@@ -85,9 +87,9 @@ describe("POST /api/summary/suggestion", () => {
     expect(createResponseMock).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "gpt-4.1-mini",
-        response_format: expect.objectContaining({
-          type: "json_schema",
-          json_schema: expect.objectContaining({
+        text: expect.objectContaining({
+          format: expect.objectContaining({
+            type: "json_schema",
             name: "SummarySuggestion",
           }),
         }),
@@ -98,7 +100,9 @@ describe("POST /api/summary/suggestion", () => {
     );
 
     const userPromptText = readUserPromptText(createResponseMock.mock.calls[0][0]?.input);
-    expect(userPromptText).toContain("# Selected Summary Section");
+    expect(userPromptText).toContain("# Summary Request");
+    expect(userPromptText).toContain("対象日: 2025-11-03");
+    expect(userPromptText).toContain("## 選択中のサマリ");
     expect(userPromptText).toContain("# Summary");
   });
 
@@ -157,6 +161,7 @@ describe("POST /api/summary/suggestion", () => {
         model: "gpt-4.1-mini",
         prompt: "新しいセクションを作成してください",
         content: "",
+        date: "2025-11-03",
       }),
     });
 

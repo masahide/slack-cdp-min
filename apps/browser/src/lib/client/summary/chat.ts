@@ -8,6 +8,7 @@ export type SummaryChatRequest = {
   model: string;
   prompt: string;
   content: string;
+  date: string;
   previousResponseId?: string | null;
   selection?: SummaryChatSelection | null;
 };

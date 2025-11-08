@@ -7,20 +7,17 @@ import {
   buildSummarySuggestionResponseFormat,
   parseSummarySuggestionText,
 } from "$lib/server/summarySuggestion";
-
-const SUMMARY_INSTRUCTIONS = [
-  "あなたは日報の Markdown サマリを共同編集するアシスタントです。",
-  "- 役割: 編集者として、ユーザーの入力を尊重しつつサマリ文書の品質を高めること",
-  "- トーン: 丁寧で簡潔（必要十分な説明に留める）",
-  "- 目的: summary_update と assistant_message を JSON Schema に従って必ず生成すること",
-  "- 良い応答例: summary_update.mode を適切に選び、content には Markdown の差分本文のみを含める。assistant_message では提案理由と次のアクションを短く示す",
-  "- 悪い応答例: schema にないフィールドを追加する、content に差分以外の説明を混在させる、assistant_message を空にする",
-].join("\n");
+import {
+  loadSummaryPromptTemplates,
+  renderSummaryUserPrompt,
+  type SummaryPromptContext,
+} from "$lib/server/summaryPrompts";
 
 type SuggestionRequestBody = {
   model?: unknown;
   prompt?: unknown;
   content?: unknown;
+  date?: unknown;
   selection?: unknown;
   previousResponseId?: unknown;
 };
@@ -42,19 +39,31 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   try {
+    const templates = await loadSummaryPromptTemplates();
+    const promptContext: SummaryPromptContext = {
+      mode: "chat",
+      date: body.value.date,
+      prompt: body.value.prompt,
+      content: body.value.content,
+      selection: body.value.selection,
+    };
+    const userPrompt = renderSummaryUserPrompt(templates.user.source, promptContext);
+
     const client = await createOpenAIClient({ apiKey: OPENAI_API_KEY });
     const response = await client.responses.create({
       model: body.value.model,
-      response_format: buildSummarySuggestionResponseFormat(),
-      instructions: SUMMARY_INSTRUCTIONS,
+      text: {
+        format: buildSummarySuggestionResponseFormat(),
+      },
+      instructions: templates.system.source,
       previous_response_id: body.value.previousResponseId ?? undefined,
       input: [
         {
           role: "user",
           content: [
             {
-              type: "text",
-              text: buildUserPrompt(body.value.prompt, body.value.content, body.value.selection),
+              type: "input_text",
+              text: userPrompt,
             },
           ],
         },
@@ -92,6 +101,7 @@ async function readRequestBody(request: Request): Promise<
         model: string;
         prompt: string;
         content: string;
+        date: string | null;
         selection: SummarySelection;
         previousResponseId: string | null;
       };
@@ -108,6 +118,8 @@ async function readRequestBody(request: Request): Promise<
   const model = typeof payload.model === "string" ? payload.model.trim() : "";
   const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
   const content = typeof payload.content === "string" ? payload.content : "";
+  const date =
+    typeof payload.date === "string" && payload.date.trim().length > 0 ? payload.date.trim() : null;
   const selection = normalizeSelection(payload.selection);
   const previousResponseId =
     typeof payload.previousResponseId === "string" && payload.previousResponseId.trim().length > 0
@@ -124,22 +136,11 @@ async function readRequestBody(request: Request): Promise<
       model,
       prompt,
       content,
+      date,
       selection,
       previousResponseId,
     },
   };
-}
-
-function buildUserPrompt(prompt: string, content: string, selection: SummarySelection): string {
-  const sections = ["# User Prompt", prompt.trim() || "(empty)", ""];
-  if (selection && selection.content.trim().length > 0) {
-    sections.push("# Selected Summary Section");
-    sections.push(selection.content);
-    sections.push("");
-  }
-  sections.push("# Current Summary");
-  sections.push(content);
-  return sections.join("\n");
 }
 
 function extractStructuredText(response: unknown): string {

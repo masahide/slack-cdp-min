@@ -46,6 +46,8 @@
   let localChatBusy = false;
   let suggestionSeq = 0;
   let lastResponseId: string | null = null;
+  let initialAssistantMessage: string | null = draft.assistantMessage ?? null;
+  let initialAssistantReasoning: string | null = draft.reasoning ?? null;
 
   let editorRef: SummaryEditorShell | null = null;
   let previewRef: MarkdownPreview | null = null;
@@ -70,6 +72,8 @@
       lastResponseId = null;
       suggestions = [];
       suggestionSeq = 0;
+      initialAssistantMessage = draft.assistantMessage ?? null;
+      initialAssistantReasoning = draft.reasoning ?? null;
     }
   }
 
@@ -153,6 +157,7 @@
         model,
         prompt: trimmedPrompt,
         content: baseContent,
+        date: editorDraft.date ?? draft.date ?? "",
         previousResponseId: lastResponseId ?? undefined,
         selection: selectionPayload,
       });
@@ -224,13 +229,34 @@
     if (!hasSuggestionContent(suggestion.payload.summaryUpdate)) {
       return;
     }
-    const nextContent = applySummaryUpdate(
-      editorDraft.content,
-      suggestion.payload.summaryUpdate,
-      mode
+    const nextContent = sanitizeContentWithAssistantMessage(
+      applySummaryUpdate(editorDraft.content, suggestion.payload.summaryUpdate, mode),
+      suggestion.payload.assistantMessage
     );
     updateEditorDraft(nextContent);
     dismissSuggestion(suggestion.id);
+  }
+
+  function sanitizeContentWithAssistantMessage(content: string, assistantMessage: string | null) {
+    if (!assistantMessage) {
+      return content;
+    }
+    const trimmedAssistant = assistantMessage.trim();
+    if (!trimmedAssistant) {
+      return content;
+    }
+    const trimmedContent = content.trimEnd();
+    if (trimmedContent === trimmedAssistant) {
+      return "";
+    }
+    if (trimmedContent.endsWith(`\n${trimmedAssistant}`)) {
+      const withoutMessage = trimmedContent.slice(
+        0,
+        trimmedContent.length - trimmedAssistant.length
+      );
+      return withoutMessage.trimEnd();
+    }
+    return content;
   }
 
   function dismissSuggestion(id: number) {
@@ -274,7 +300,7 @@
   }
 
   function signature(input: SummaryEditorDraft): string {
-    return `${input.date ?? ""}::${input.updatedAt ?? ""}::${input.content ?? ""}`;
+    return `${input.date ?? ""}::${input.updatedAt ?? ""}::${input.content ?? ""}::${input.assistantMessage ?? ""}::${input.reasoning ?? ""}`;
   }
 </script>
 
@@ -302,6 +328,26 @@
       bind:value={prompt}
       disabled={chatBusy()}
     />
+    {#if initialAssistantMessage}
+      <section class="initial-assistant-message">
+        <h3>生成したサマリへのコメント</h3>
+        <p class="assistant-message">{initialAssistantMessage}</p>
+        {#if initialAssistantReasoning}
+          <p class="assistant-reasoning">{initialAssistantReasoning}</p>
+        {/if}
+        <button
+          type="button"
+          class="initial-dismiss"
+          on:click={() => {
+            initialAssistantMessage = null;
+            initialAssistantReasoning = null;
+            dispatch("assistantdismiss", {});
+          }}
+        >
+          非表示にする
+        </button>
+      </section>
+    {/if}
     <button class="prompt-submit" type="button" on:click={handlePromptSubmit} disabled={chatBusy()}>
       送信
     </button>
@@ -401,4 +447,300 @@
   </section>
 </div>
 
-<style src="./summaryWorkspace.css"></style>
+<style>
+  .summary-workspace {
+    display: flex;
+    gap: 1.5rem;
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .summary-workspace .pane {
+    flex: 1 1 0;
+    min-width: 0;
+    background: var(--surface-card);
+    border: 1px solid var(--surface-border-strong);
+    border-radius: 12px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-height: 0;
+  }
+
+  .summary-workspace .pane.chat {
+    flex: 0.95 1 0;
+  }
+
+  .summary-workspace .pane.editor {
+    flex: 1.15 1 0;
+  }
+
+  .summary-workspace .pane.preview {
+    flex: 1.1 1 0;
+    max-width: 600px;
+  }
+
+  @media (max-width: 1400px) {
+    .summary-workspace {
+      gap: 1.25rem;
+    }
+  }
+
+  @media (max-width: 1120px) {
+    .summary-workspace {
+      flex-wrap: wrap;
+    }
+
+    .summary-workspace .pane.preview {
+      flex: 1 1 100%;
+      max-width: none;
+    }
+  }
+
+  @media (max-width: 880px) {
+    .summary-workspace {
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .summary-workspace .pane.preview {
+      flex: 1 1 auto;
+    }
+  }
+
+  .summary-workspace .pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .summary-workspace .pane-header h2 {
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  .summary-workspace .model-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+  }
+
+  .summary-workspace .model-selector select {
+    padding: 0.35rem 0.5rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--surface-border-strong);
+  }
+
+  .summary-workspace .prompt-input {
+    min-height: 14rem;
+    resize: vertical;
+    font-family: inherit;
+    font-size: 0.95rem;
+    padding: 0.85rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--surface-border);
+  }
+
+  .summary-workspace .initial-assistant-message {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 0.75rem;
+    background: rgba(37, 99, 235, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .summary-workspace .initial-assistant-message h3 {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+  }
+
+  .summary-workspace .initial-assistant-message .assistant-reasoning {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+  }
+
+  .summary-workspace .initial-assistant-message .initial-dismiss {
+    align-self: flex-end;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .summary-workspace .initial-assistant-message .initial-dismiss:hover {
+    text-decoration: underline;
+  }
+
+  .summary-workspace .prompt-submit {
+    align-self: flex-end;
+    border: none;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    padding: 0.45rem 1.2rem;
+    cursor: pointer;
+  }
+
+  .summary-workspace .prompt-submit:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .summary-workspace .suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .summary-workspace .suggestions h3 {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+  }
+
+  .summary-workspace .suggestions ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .summary-workspace .suggestions li {
+    border: 1px solid var(--surface-border);
+    border-radius: 0.75rem;
+    padding: 0.75rem;
+    background: var(--surface-base);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .summary-workspace .suggestion-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .summary-workspace .suggestion-actions button {
+    border: none;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.9rem;
+    cursor: pointer;
+  }
+
+  .summary-workspace .suggestion-actions button.secondary {
+    background: var(--surface-border-strong);
+    color: var(--text-secondary);
+  }
+
+  .summary-workspace .suggestion-actions button:hover {
+    opacity: 0.9;
+  }
+
+  .summary-workspace .status-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .summary-workspace .status {
+    margin: 0;
+    font-size: 0.8rem;
+  }
+
+  .summary-workspace .status.saved-at {
+    color: var(--text-secondary);
+  }
+
+  .summary-workspace .status.error {
+    color: #ef4444;
+  }
+
+  .summary-workspace .preview-body {
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+  }
+
+  .summary-workspace .suggestion-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .summary-workspace .assistant-message {
+    margin: 0;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+
+  .summary-workspace .assistant-mode {
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+  }
+
+  .summary-workspace .assistant-selection {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+  }
+
+  .summary-workspace .assistant-reasoning {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+  }
+
+  .summary-workspace .diff-lines {
+    margin: 0;
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    background: var(--code-block-bg);
+    font-family: var(--font-mono, ui-monospace);
+    font-size: 0.8rem;
+    line-height: 1.3;
+    overflow-x: auto;
+  }
+
+  .summary-workspace .diff-line {
+    display: block;
+    white-space: pre;
+  }
+
+  .summary-workspace .diff-line.add {
+    color: #15803d;
+  }
+
+  .summary-workspace .diff-line.remove {
+    color: #dc2626;
+  }
+
+  .summary-workspace .diff-line.context {
+    color: var(--text-secondary);
+  }
+
+  .summary-workspace .raw-suggestion {
+    margin: 0;
+    white-space: pre-wrap;
+    font-family: inherit;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    background: var(--surface-muted);
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+  }
+</style>

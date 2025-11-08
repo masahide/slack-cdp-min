@@ -26,7 +26,7 @@ describe("SummaryEditorShell", () => {
       onSave(event.detail.content);
     });
 
-    expect(screen.getByText("日報サマリ")).toBeInTheDocument();
+    expect(screen.getByText("サマリ編集")).toBeInTheDocument();
     expect(screen.getByLabelText("サマリ本文")).toHaveValue(draft.content);
 
     await user.click(screen.getByRole("button", { name: "サマリを作成" }));

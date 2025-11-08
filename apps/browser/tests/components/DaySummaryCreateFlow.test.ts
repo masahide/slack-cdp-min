@@ -31,7 +31,7 @@ const summaryApiMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("$app/environment", () => ({
-  browser: false,
+  browser: true,
 }));
 
 vi.mock("$app/navigation", () => ({

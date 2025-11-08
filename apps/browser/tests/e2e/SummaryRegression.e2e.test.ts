@@ -13,7 +13,7 @@ const pageState = vi.hoisted(() => ({
 }));
 
 vi.mock("$app/environment", () => ({
-  browser: false,
+  browser: true,
 }));
 
 vi.mock("$app/navigation", () => ({
@@ -110,8 +110,9 @@ describe("サマリ編集フロー 回帰E2E", () => {
       expect(screen.queryByText("追記案を生成しました。")).not.toBeInTheDocument();
     });
 
-    const savedLabel = await screen.findByText(/最終保存:/);
-    expect(savedLabel.textContent ?? "").toContain("2025/11/03");
+    const savedLabels = await screen.findAllByText(/最終保存:/);
+    const editorSavedLabel = savedLabels.find((element) => element.classList.contains("status"));
+    expect(editorSavedLabel?.textContent ?? "").toContain("2025/11/03");
 
     const [suggestionRequest] = apiMock.getSuggestionRequests();
     expect(suggestionRequest).toMatchObject({

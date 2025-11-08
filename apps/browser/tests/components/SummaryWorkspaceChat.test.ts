@@ -40,6 +40,7 @@ describe("SummaryWorkspace LLMチャット (RED)", () => {
         model: "gpt-4.1-mini",
         prompt: "箇条書きを増やして",
         content: "初期",
+        date: "2025-11-03",
       })
     );
     expect(chatApiMock.requestSuggestion.mock.calls[0][0].selection).toBeUndefined();
@@ -121,6 +122,7 @@ describe("SummaryWorkspace LLMチャット (RED)", () => {
 
     expect(chatApiMock.requestSuggestion).toHaveBeenCalled();
     const payload = chatApiMock.requestSuggestion.mock.calls[0][0];
+    expect(payload.date).toBe("2025-11-03");
     expect(payload.selection).toEqual(
       expect.objectContaining({
         start: 0,
