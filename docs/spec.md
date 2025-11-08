@@ -459,31 +459,61 @@ export interface IngestionAdapter {
 - **形式**：見出し＋箇条書き、重複排除、80字程度/行
 - **機密対策**：人名/トークン/クエリは前処理でマスク
 
+### 4.4 サマリ生成フロー & 編集 UI
+
+- **サマリ作成ボタン**
+  - 日付別ビュー（`/day/<date>`）に「サマリを作成」ボタンを配置する。押下すると対象日の JSONL を読み込み、4.1 のパイプラインで初期 Markdown サマリを生成する。
+  - 既に `<dataDir>/YYYY/MM/DD/summaries/daily.md` が存在する場合はその内容をロードし、編集モードで再利用する。存在しない場合は新規ファイルを作成し、保存時に初回生成する。
+- **3 ペイン構成（左→右に縦割り）**
+  1. **LLM チャットウィンドウ**
+     - OpenAI API 経由で複数モデル（例：`gpt-4.1-mini`, `gpt-4o`, `gpt-4.1`）から選択可能なプルダウンを用意する。既定値は `reaclog.config.json` の `llm.defaultModel`。
+     - 編集ウィンドウの全文、または選択範囲をコンテキストとしてチャットに添付し、「箇条書きを増やす」「セクションを要約し直す」などのプロンプトを送信できる。
+     - LLM からの返信は差分プレビュー付きで提示し、「置き換え」「追記」「キャンセル」の操作で編集ウィンドウへ反映する。置き換え時は本文を一括更新し、追記時はカーソル位置へ挿入する。
+  2. **編集ウィンドウ**
+     - Markdown 本文をそのまま表示・編集できる複数行テキストエリア（等幅フォント・自動リサイズ無効）を用意する。
+     - キーボードショートカット（`Cmd/Ctrl+S`）で保存、`Cmd/Ctrl+Enter` で LLM チャットに送信しやすいようにする。入力は 500ms デバウンスで内蔵ストアに反映し、プレビューと LLM への共有を同期する。
+  3. **プレビューウィンドウ**
+     - 編集ウィンドウの最新 Markdown をニアリアルタイム（300–500ms 程度のデバウンス）で HTML レンダリングし、Svelte の `marked` 等を利用して GitHub 風 Markdown を表示する。
+     - コードブロック・表・チェックボックス・箇条書きに対応し、スクロール同期（編集ウィンドウとの相互リンク）を提供する。
+- **保存と下書き管理**
+  - 「保存」操作でファイルを `<dataDir>/YYYY/MM/DD/summaries/daily.md` に書き出す。保存成功時はトースト通知とプレビューヘッダにタイムスタンプを表示する。
+  - 未保存の変更がある場合はブラウザを離脱しようとすると確認ダイアログを出す。
+  - サマリ作成画面は URL 内に `?summary=edit` 等のフラグを持たせ、リロードしても同じ日付の下書きを再開できる。
+
+> LLM チャットは OpenAI モデルを前提とするが、API キーはクライアントには露出せず、サーバー経由で署名付きリクエストを行う。将来的に Azure OpenAI や互換 API を追加できるよう、モデル一覧は設定ファイル経由で差し替え可能にする。
+
 ---
 
 ## 5. 実行モデル & バッチ
 
-### 5.1 `pnpm start`（Slack 収集プロセス）
+### 5.1 開発モード（`pnpm dev`）
+
+- `scripts/dev.ts` を介して `pnpm dev` を実行すると、Slack の CDP ポート（`CDP_HOST`/`CDP_PORT`。既定 `127.0.0.1:9222`）が開いているかを確認し、必要なら `hack/launch_slack_cdp.sh` を用いて Slack を再起動する。
+- `hack/launch_slack_cdp.sh` は macOS で `open -a Slack --args --remote-debugging-port=<port>` を発火し、`curl http://localhost:<port>/json/version` が成功するまで 1 秒間隔で最大 10 回リトライする。試行回数と待機時間は `CDP_WAIT_ATTEMPTS` / `CDP_WAIT_DELAY` で上書きできる。
+- CDP が利用可能になると `pnpm start`（バックエンド収集）と `pnpm --filter browser dev --open`（ビューア）を並列起動し、標準出力と `logs/backend-dev.log` / `logs/browser-dev.log` にタイムスタンプ付きでログをストリームする。`Ctrl+C` または SIGINT/SIGTERM で両プロセスをまとめて停止する。
+- 既に Slack が CDP 無効で立ち上がっている場合は停止するかどうかを標準入力で確認し、拒否された場合は安全のため起動を中断する。
+
+### 5.2 `pnpm start`（Slack 収集プロセス）
 
 - `tsx src/index.ts` を起動し、Slack デスクトップアプリ（`app.slack.com`）の CDP へ接続して JSONL に追記する常駐プロセス。
 - 環境変数 `REACLOG_DATA_DIR` で保存先、`CDP_HOST`/`CDP_PORT` で接続先を上書き可能。
 - `REACLOG_DISABLE_DOM_CAPTURE=1` を指定すると DOM キャプチャを停止（本文は空になる想定）。
 - `pnpm start` 自体は UI を立ち上げない。ビューアは別プロセスで起動する。
 
-### 5.2 ビューア（apps/browser）
+### 5.3 ビューア（apps/browser）
 
 - `pnpm --filter browser dev` で Vite の開発サーバーを起動し、`http://localhost:5173` からダッシュボード／タイムライン／RAW ビューにアクセスできる。
 - `REACLOG_DATA_DIR` を指定すると、閲覧対象の日付ディレクトリを切り替えられる。
 - Slack パーマリンクを有効にする場合は `REACLOG_SLACK_WORKSPACE` または `REACLOG_SLACK_WORKSPACE_URL` を設定する（例：`REACLOG_SLACK_WORKSPACE=example-team`）。
 - 本番確認時は `pnpm --filter browser build && pnpm --filter browser preview` を利用する。
 
-### 5.3 CLI 拡張（将来）
+### 5.4 CLI 拡張（将来）
 
 - `reaclog summary --day 2025-11-03`：JSONL から日次要約を生成
 - `reaclog search --q "keyword"`：`rg` + `jq` で検索
 - `reaclog export --day 2025-11-03 --out daily-2025-11-03.md`
 
-### 5.4 スケジューリング（将来）
+### 5.5 スケジューリング（将来）
 
 - **Windows**：タスク スケジューラ
 - **Linux/macOS**：cron/systemd timer

@@ -38,6 +38,7 @@ pnpm install
 ## 開発コマンド
 
 ```bash
+pnpm dev                      # Slack CDP の立ち上げ確認 + backend/browser を並列起動
 pnpm start                    # tsx 経由で Slack 収集プロセスを起動
 pnpm run typecheck            # TypeScript 型チェック（ワークスペース全体）
 pnpm run lint                 # ESLint による静的解析
@@ -48,6 +49,8 @@ pnpm --filter browser test    # ビューアの Vitest (サーバーロード + 
 pnpm --filter browser exec tsc --noEmit  # ビューア側 TypeScript 型チェック
 pnpm run qa                   # 上記すべて（typecheck/lint/format/test/svelte-kit sync/ブラウザ型検証/Vitest）
 ```
+
+`pnpm dev` は Slack の CDP 接続（`CDP_HOST`/`CDP_PORT`）を検査し、必要に応じて `hack/launch_slack_cdp.sh` で再起動した後に `pnpm start` とビューア開発サーバーを並列起動します。CDP ポートのオープン待ちは 1 秒間隔で最大 10 回リトライし、`CDP_WAIT_ATTEMPTS` / `CDP_WAIT_DELAY` で試行回数と待機時間を調整できます。ログは `logs/backend-dev.log` / `logs/browser-dev.log` に追記され、コンソールにもタイムスタンプ付きで出力されます。
 
 ## ログビューア (SvelteKit)
 
@@ -90,6 +93,8 @@ pnpm --filter browser preview -- --host 0.0.0.0 --port 4173
 `hack/` ディレクトリのスクリプトを利用すると、WSL から Windows で動く Slack へのポートプロキシやブラウザ起動を整備できます。Slack を起動後、`chrome-remote-interface list` などで `app.slack.com` ターゲットが表示されることを確認してください。必要に応じて `CDP_HOST`/`CDP_PORT` を環境変数として指定します。資格情報（トークンやクッキー等）は絶対にリポジトリへコミットせず、共有時も必ずマスクしてください。
 
 DOM 取得は既定で有効です。リアクションが本文付きで記録されない場合は、Slack を操作した直後に対象メッセージが可視範囲にあるか確認してください。リアクション DOM の取り込みは `/api/reactions.*` への自分の POST をトリガーにしており、他メンバーのリアクション通知（WebSocket 経由）では DOM キャプチャは動きません。詳しくは後述のデバッグフラグと手動検証手順を参照してください。
+
+`hack/launch_slack_cdp.sh` は macOS で Slack をリモートデバッグポート付きで起動し、`curl http://localhost:<port>/json/version` が成功するまで再試行します。`CDP_WAIT_ATTEMPTS`（既定 10）と `CDP_WAIT_DELAY`（既定 1 秒）で挙動を調整でき、`pnpm dev` からも同じ環境変数が利用されます。
 
 ## Slack ケースのデバッグ
 

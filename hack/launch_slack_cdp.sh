@@ -20,10 +20,19 @@ if [[ "$OS_NAME" == "Darwin" ]]; then
   echo "[INFO] Launching via open (port=$PORT)"
   open -a "Slack" --args "--remote-debugging-port=$PORT"
   echo "[OK] Launched. (Check for 'DevTools listening on ws://127.0.0.1:$PORT/...')"
-  sleep 1
-  echo "curl http://localhost:9222/json/version" 
-  curl http://localhost:9222/json/version
-  exit 0
+  attempts="${CDP_WAIT_ATTEMPTS:-10}"
+  delay="${CDP_WAIT_DELAY:-1}"
+  echo "curl http://localhost:$PORT/json/version"
+  for ((i = 1; i <= attempts; i++)); do
+    if curl -fsS "http://localhost:$PORT/json/version"; then
+      exit 0
+    fi
+    echo "[WARN] DevTools endpoint not ready yet (attempt $i/$attempts). Retrying in ${delay}s..."
+    sleep "$delay"
+  done
+  echo "[ERROR] DevTools endpoint did not respond after $attempts attempts." >&2
+  curl "http://localhost:$PORT/json/version" || true
+  exit 1
 fi
 
 pwsh() { powershell.exe -NoProfile -Command "$1" | tr -d '\r'; }
