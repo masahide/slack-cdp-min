@@ -107,7 +107,7 @@ describe("サマリ編集フロー 回帰E2E", () => {
     expect(toast).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.queryByText("追記案を生成しました。")).not.toBeInTheDocument();
+      expect(screen.getByText("追記案を生成しました。")).toBeInTheDocument();
     });
 
     const savedLabels = await screen.findAllByText(/最終保存:/);

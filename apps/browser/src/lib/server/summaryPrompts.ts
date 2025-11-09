@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import Handlebars from "handlebars";
 

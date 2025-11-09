@@ -46,7 +46,7 @@
 
   type ChatTimelineEntry =
     | { id: number; kind: "user"; prompt: string }
-    | { id: number; kind: "assistant"; suggestionId: number; suggestion: SuggestionEntry | null };
+    | { id: number; kind: "assistant"; suggestionId: number; suggestion: SuggestionEntry };
 
   let prompt = "";
   let selectedModel = activeModel ?? models[0] ?? "";
@@ -109,11 +109,18 @@
   }
 
   $: suggestionById = new Map(suggestions.map((item) => [item.id, item]));
-  $: chatTimeline = chatEntries.map((entry) =>
-    entry.kind === "assistant"
-      ? { ...entry, suggestion: suggestionById.get(entry.suggestionId) ?? null }
-      : entry
-  );
+  $: chatTimeline = chatEntries
+    .map((entry): ChatTimelineEntry | null => {
+      if (entry.kind === "assistant") {
+        const suggestion = suggestionById.get(entry.suggestionId);
+        if (!suggestion) {
+          return null;
+        }
+        return { ...entry, suggestion };
+      }
+      return entry;
+    })
+    .filter((entry): entry is ChatTimelineEntry => entry !== null);
 
   $: {
     const nextEditor = editorRef?.getTextarea?.() ?? null;
@@ -220,10 +227,7 @@
         },
       ];
       chatEntrySeq += 1;
-      chatEntries = [
-        ...chatEntries,
-        { id: chatEntrySeq, kind: "assistant", suggestionId },
-      ];
+      chatEntries = [...chatEntries, { id: chatEntrySeq, kind: "assistant", suggestionId }];
       if (response.responseId) {
         lastResponseId = response.responseId;
       }
@@ -407,77 +411,75 @@
             {#if entry.kind === "user"}
               <li class="chat-entry user">
                 <span class="chat-user-label">あなた</span>
-                <p class="chat-user-message">{entry.prompt}</p>
+                <p class="chat-user-message" aria-label={entry.prompt}>
+                  {`\u200B${entry.prompt}`}
+                </p>
               </li>
-            {:else}
-              {#if entry.suggestion}
-                <li class="chat-entry assistant">
-                  <article class="suggestion-card">
-                    <header class="suggestion-header">
-                      <p class="assistant-message">{entry.suggestion.payload.assistantMessage}</p>
-                    </header>
-                    {#if summarizeSelection(entry.suggestion.selection)}
-                      <p class="assistant-selection">
-                        選択範囲: {summarizeSelection(entry.suggestion.selection)}
-                      </p>
+            {:else if entry.kind === "assistant"}
+              <li class="chat-entry assistant">
+                <article class="suggestion-card">
+                  <header class="suggestion-header">
+                    <p class="assistant-message">{entry.suggestion.payload.assistantMessage}</p>
+                  </header>
+                  {#if summarizeSelection(entry.suggestion.selection)}
+                    <p class="assistant-selection">
+                      選択範囲: {summarizeSelection(entry.suggestion.selection)}
+                    </p>
+                  {/if}
+                  {#if entry.suggestion.diff.length > 0}
+                    <pre class="diff-lines">
+                      {#each entry.suggestion.diff as line, index (index)}
+                        <code class={`diff-line ${line.type}`}>{formatDiffLine(line)}</code>
+                      {/each}
+                    </pre>
+                  {:else if hasSuggestionContent(entry.suggestion.payload.summaryUpdate)}
+                    <pre class="raw-suggestion">
+                      {entry.suggestion.payload.summaryUpdate.content}
+                    </pre>
+                  {/if}
+                  {#if entry.suggestion.payload.reasoning}
+                    <p class="assistant-reasoning">{entry.suggestion.payload.reasoning}</p>
+                  {/if}
+                  <div class="suggestion-actions">
+                    {#if entry.suggestion.applied}
+                      <span class="suggestion-status applied">適用済み</span>
+                    {:else if entry.suggestion.dismissed}
+                      <span class="suggestion-status cancelled">キャンセル済み</span>
+                      <button
+                        type="button"
+                        class="secondary"
+                        on:click={() => restoreSuggestion(entry.suggestion.id)}
+                      >
+                        再表示
+                      </button>
+                    {:else}
+                      <button
+                        type="button"
+                        on:click={() => applySuggestion(entry.suggestion, "replace")}
+                        disabled={!hasSuggestionContent(entry.suggestion.payload.summaryUpdate) ||
+                          chatBusy()}
+                      >
+                        置き換え
+                      </button>
+                      <button
+                        type="button"
+                        on:click={() => applySuggestion(entry.suggestion, "append")}
+                        disabled={!hasSuggestionContent(entry.suggestion.payload.summaryUpdate) ||
+                          chatBusy()}
+                      >
+                        追記
+                      </button>
+                      <button
+                        type="button"
+                        class="secondary"
+                        on:click={() => dismissSuggestion(entry.suggestion.id)}
+                      >
+                        キャンセル
+                      </button>
                     {/if}
-                    {#if entry.suggestion.diff.length > 0}
-                      <pre class="diff-lines">
-                        {#each entry.suggestion.diff as line, index (index)}
-                          <code class={`diff-line ${line.type}`}>{formatDiffLine(line)}</code>
-                        {/each}
-                      </pre>
-                    {:else if hasSuggestionContent(entry.suggestion.payload.summaryUpdate)}
-                      <pre class="raw-suggestion">
-                        {entry.suggestion.payload.summaryUpdate.content}
-                      </pre>
-                    {/if}
-                    {#if entry.suggestion.payload.reasoning}
-                      <p class="assistant-reasoning">{entry.suggestion.payload.reasoning}</p>
-                    {/if}
-                    <div class="suggestion-actions">
-                      {#if entry.suggestion.applied}
-                        <span class="suggestion-status applied">適用済み</span>
-                      {:else if entry.suggestion.dismissed}
-                        <span class="suggestion-status cancelled">キャンセル済み</span>
-                        <button
-                          type="button"
-                          class="secondary"
-                          on:click={() => restoreSuggestion(entry.suggestion.id)}
-                        >
-                          再表示
-                        </button>
-                      {:else}
-                        <button
-                          type="button"
-                          on:click={() => applySuggestion(entry.suggestion, "replace")}
-                          disabled={
-                            !hasSuggestionContent(entry.suggestion.payload.summaryUpdate) || chatBusy()
-                          }
-                        >
-                          置き換え
-                        </button>
-                        <button
-                          type="button"
-                          on:click={() => applySuggestion(entry.suggestion, "append")}
-                          disabled={
-                            !hasSuggestionContent(entry.suggestion.payload.summaryUpdate) || chatBusy()
-                          }
-                        >
-                          追記
-                        </button>
-                        <button
-                          type="button"
-                          class="secondary"
-                          on:click={() => dismissSuggestion(entry.suggestion.id)}
-                        >
-                          キャンセル
-                        </button>
-                      {/if}
-                    </div>
-                  </article>
-                </li>
-              {/if}
+                  </div>
+                </article>
+              </li>
             {/if}
           {/each}
         </ul>
@@ -492,7 +494,12 @@
         bind:value={prompt}
         disabled={chatBusy()}
       />
-      <button class="prompt-submit" type="button" on:click={handlePromptSubmit} disabled={chatBusy()}>
+      <button
+        class="prompt-submit"
+        type="button"
+        on:click={handlePromptSubmit}
+        disabled={chatBusy()}
+      >
         送信
       </button>
     </div>

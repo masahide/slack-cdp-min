@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 import { sveltekit } from "@sveltejs/kit/vite";
 
 const projectRoot = fileURLToPath(new URL("./", import.meta.url));
-const pool = process.env.CI ? "threads" : "vmThreads";
+const pool =
+  (process.env.VITEST_POOL as "threads" | "vmThreads" | "process" | undefined) ?? "threads";
 
 export default defineConfig({
   plugins: [sveltekit()],

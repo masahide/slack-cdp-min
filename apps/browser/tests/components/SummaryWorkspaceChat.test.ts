@@ -72,6 +72,7 @@ describe("SummaryWorkspace LLMチャット (RED)", () => {
     await user.click(applyButton);
 
     await waitFor(() => expect(screen.getByLabelText("サマリ本文")).toHaveValue("# 新しいサマリ"));
+    expect(await screen.findByText("適用済み")).toBeInTheDocument();
   });
 
   it("別モデルを選択すると以降のリクエストで反映される", async () => {
@@ -151,9 +152,8 @@ describe("SummaryWorkspace LLMチャット (RED)", () => {
     expect(await screen.findByText("追記しました")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "キャンセル" }));
 
-    await waitFor(() => {
-      expect(screen.queryByText("追記しました")).not.toBeInTheDocument();
-    });
+    await waitFor(() => expect(screen.getByText("追記しました")).toBeInTheDocument());
+    expect(screen.getByText("キャンセル済み")).toBeInTheDocument();
   });
 
   it("前回の応答 ID を次のリクエストの previousResponseId に渡す", async () => {
