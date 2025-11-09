@@ -36,11 +36,22 @@
     diff: SummaryDiffLine[];
     selection: SelectionSnapshot | null;
     baseContent: string;
+    applied: boolean;
+    dismissed: boolean;
   };
+
+  type ChatEntry =
+    | { id: number; kind: "user"; prompt: string }
+    | { id: number; kind: "assistant"; suggestionId: number };
+
+  type ChatTimelineEntry =
+    | { id: number; kind: "user"; prompt: string }
+    | { id: number; kind: "assistant"; suggestionId: number; suggestion: SuggestionEntry | null };
 
   let prompt = "";
   let selectedModel = activeModel ?? models[0] ?? "";
   let draftSignature = signature(draft);
+  let draftSessionKey = sessionKey(draft);
   let editorDraft: SummaryEditorDraft = { ...draft };
   let suggestions: SuggestionEntry[] = [];
   let localChatBusy = false;
@@ -48,13 +59,20 @@
   let lastResponseId: string | null = null;
   let initialAssistantMessage: string | null = draft.assistantMessage ?? null;
   let initialAssistantReasoning: string | null = draft.reasoning ?? null;
+  let pendingDraftContent: string | null = null;
+  let chatEntries: ChatEntry[] = [];
+  let chatEntrySeq = 0;
 
   let editorRef: SummaryEditorShell | null = null;
   let previewRef: MarkdownPreview | null = null;
   let editorElement: HTMLTextAreaElement | null = null;
   let previewElement: HTMLElement | null = null;
+  let chatBodyElement: HTMLDivElement | null = null;
   let disposeScrollSync: (() => void) | null = null;
   let scrollSyncing = false;
+  let suggestionById = new Map<number, SuggestionEntry>();
+  let previousChatEntryCount = 0;
+  let chatTimeline: ChatTimelineEntry[] = [];
 
   $: {
     if (activeModel && activeModel !== selectedModel) {
@@ -67,15 +85,35 @@
   $: {
     const nextSignature = signature(draft);
     if (nextSignature !== draftSignature) {
+      const normalizedDraftContent = draft.content ?? "";
+      const isInternalUpdate =
+        pendingDraftContent !== null && pendingDraftContent === normalizedDraftContent;
+      const nextSessionKey = sessionKey(draft);
+      const sessionChanged = nextSessionKey !== draftSessionKey;
       draftSignature = nextSignature;
+      draftSessionKey = nextSessionKey;
       editorDraft = { ...draft };
-      lastResponseId = null;
-      suggestions = [];
-      suggestionSeq = 0;
-      initialAssistantMessage = draft.assistantMessage ?? null;
-      initialAssistantReasoning = draft.reasoning ?? null;
+      if (!isInternalUpdate) {
+        initialAssistantMessage = draft.assistantMessage ?? null;
+        initialAssistantReasoning = draft.reasoning ?? null;
+        if (sessionChanged) {
+          lastResponseId = null;
+          suggestions = [];
+          suggestionSeq = 0;
+          chatEntries = [];
+          chatEntrySeq = 0;
+        }
+      }
+      pendingDraftContent = null;
     }
   }
+
+  $: suggestionById = new Map(suggestions.map((item) => [item.id, item]));
+  $: chatTimeline = chatEntries.map((entry) =>
+    entry.kind === "assistant"
+      ? { ...entry, suggestion: suggestionById.get(entry.suggestionId) ?? null }
+      : entry
+  );
 
   $: {
     const nextEditor = editorRef?.getTextarea?.() ?? null;
@@ -95,6 +133,10 @@
       previewElement = nextPreview;
       refreshScrollSync();
     }
+    if (chatBodyElement && chatEntries.length > previousChatEntryCount) {
+      chatBodyElement.scrollTop = chatBodyElement.scrollHeight;
+    }
+    previousChatEntryCount = chatEntries.length;
   });
 
   function refreshScrollSync() {
@@ -151,6 +193,8 @@
         }
       : undefined;
     const baseContent = editorDraft.content;
+    chatEntrySeq += 1;
+    chatEntries = [...chatEntries, { id: chatEntrySeq, kind: "user", prompt: trimmedPrompt }];
     localChatBusy = true;
     try {
       const response = await requestSuggestion({
@@ -162,15 +206,23 @@
         selection: selectionPayload,
       });
       suggestionSeq += 1;
+      const suggestionId = suggestionSeq;
       suggestions = [
         ...suggestions,
         {
-          id: suggestionSeq,
+          id: suggestionId,
           payload: response,
           diff: diffSummary(baseContent, applySummaryUpdate(baseContent, response.summaryUpdate)),
           selection,
           baseContent,
+          applied: false,
+          dismissed: false,
         },
+      ];
+      chatEntrySeq += 1;
+      chatEntries = [
+        ...chatEntries,
+        { id: chatEntrySeq, kind: "assistant", suggestionId },
       ];
       if (response.responseId) {
         lastResponseId = response.responseId;
@@ -205,6 +257,7 @@
 
   function handleDraftInput(event: CustomEvent<{ content: string }>) {
     editorDraft = { ...editorDraft, content: event.detail.content };
+    pendingDraftContent = event.detail.content;
     dispatch("draftinput", event.detail);
   }
 
@@ -234,7 +287,9 @@
       suggestion.payload.assistantMessage
     );
     updateEditorDraft(nextContent);
-    dismissSuggestion(suggestion.id);
+    suggestions = suggestions.map((item) =>
+      item.id === suggestion.id ? { ...item, applied: true, dismissed: false } : item
+    );
   }
 
   function sanitizeContentWithAssistantMessage(content: string, assistantMessage: string | null) {
@@ -260,11 +315,20 @@
   }
 
   function dismissSuggestion(id: number) {
-    suggestions = suggestions.filter((item) => item.id !== id);
+    suggestions = suggestions.map((item) =>
+      item.id === id ? { ...item, dismissed: true, applied: false } : item
+    );
+  }
+
+  function restoreSuggestion(id: number) {
+    suggestions = suggestions.map((item) =>
+      item.id === id ? { ...item, dismissed: false } : item
+    );
   }
 
   function updateEditorDraft(content: string) {
     editorDraft = { ...editorDraft, content };
+    pendingDraftContent = content;
     dispatch("draftinput", { content });
   }
 
@@ -275,17 +339,6 @@
   function formatDiffLine(line: SummaryDiffLine): string {
     const prefix = line.type === "add" ? "+" : line.type === "remove" ? "-" : " ";
     return `${prefix}${line.value}`;
-  }
-
-  function describeMode(mode: SummaryUpdate["mode"]): string {
-    switch (mode) {
-      case "replace":
-        return "推奨操作: 置き換え";
-      case "append":
-        return "推奨操作: 追記";
-      default:
-        return "推奨操作: 確認のみ";
-    }
   }
 
   function summarizeSelection(selection: SelectionSnapshot | null): string | null {
@@ -301,6 +354,10 @@
 
   function signature(input: SummaryEditorDraft): string {
     return `${input.date ?? ""}::${input.updatedAt ?? ""}::${input.content ?? ""}::${input.assistantMessage ?? ""}::${input.reasoning ?? ""}`;
+  }
+
+  function sessionKey(input: SummaryEditorDraft): string {
+    return `${input.date ?? ""}::${input.updatedAt ?? ""}`;
   }
 </script>
 
@@ -322,93 +379,123 @@
         </select>
       </label>
     </header>
-    <textarea
-      class="prompt-input"
-      placeholder="LLM への指示を書きます"
-      bind:value={prompt}
-      disabled={chatBusy()}
-    />
-    {#if initialAssistantMessage}
-      <section class="initial-assistant-message">
-        <h3>生成したサマリへのコメント</h3>
-        <p class="assistant-message">{initialAssistantMessage}</p>
-        {#if initialAssistantReasoning}
-          <p class="assistant-reasoning">{initialAssistantReasoning}</p>
-        {/if}
-        <button
-          type="button"
-          class="initial-dismiss"
-          on:click={() => {
-            initialAssistantMessage = null;
-            initialAssistantReasoning = null;
-            dispatch("assistantdismiss", {});
-          }}
-        >
-          非表示にする
-        </button>
-      </section>
-    {/if}
-    <button class="prompt-submit" type="button" on:click={handlePromptSubmit} disabled={chatBusy()}>
-      送信
-    </button>
+    <div class="chat-body" bind:this={chatBodyElement}>
+      {#if initialAssistantMessage}
+        <section class="initial-assistant-message">
+          <h3>生成したサマリへのコメント</h3>
+          <p class="assistant-message">{initialAssistantMessage}</p>
+          {#if initialAssistantReasoning}
+            <p class="assistant-reasoning">{initialAssistantReasoning}</p>
+          {/if}
+          <button
+            type="button"
+            class="initial-dismiss"
+            on:click={() => {
+              initialAssistantMessage = null;
+              initialAssistantReasoning = null;
+              dispatch("assistantdismiss", {});
+            }}
+          >
+            非表示にする
+          </button>
+        </section>
+      {/if}
 
-    {#if suggestions.length > 0}
-      <section class="suggestions">
-        <h3>提案</h3>
-        <ul>
-          {#each suggestions as suggestion (suggestion.id)}
-            <li>
-              <header class="suggestion-header">
-                <p class="assistant-message">{suggestion.payload.assistantMessage}</p>
-                <span class="assistant-mode">
-                  {describeMode(suggestion.payload.summaryUpdate.mode)}
-                </span>
-              </header>
-              {#if summarizeSelection(suggestion.selection)}
-                <p class="assistant-selection">
-                  選択範囲: {summarizeSelection(suggestion.selection)}
-                </p>
+      {#if chatTimeline.length > 0}
+        <ul class="chat-log">
+          {#each chatTimeline as entry (entry.id)}
+            {#if entry.kind === "user"}
+              <li class="chat-entry user">
+                <span class="chat-user-label">あなた</span>
+                <p class="chat-user-message">{entry.prompt}</p>
+              </li>
+            {:else}
+              {#if entry.suggestion}
+                <li class="chat-entry assistant">
+                  <article class="suggestion-card">
+                    <header class="suggestion-header">
+                      <p class="assistant-message">{entry.suggestion.payload.assistantMessage}</p>
+                    </header>
+                    {#if summarizeSelection(entry.suggestion.selection)}
+                      <p class="assistant-selection">
+                        選択範囲: {summarizeSelection(entry.suggestion.selection)}
+                      </p>
+                    {/if}
+                    {#if entry.suggestion.diff.length > 0}
+                      <pre class="diff-lines">
+                        {#each entry.suggestion.diff as line, index (index)}
+                          <code class={`diff-line ${line.type}`}>{formatDiffLine(line)}</code>
+                        {/each}
+                      </pre>
+                    {:else if hasSuggestionContent(entry.suggestion.payload.summaryUpdate)}
+                      <pre class="raw-suggestion">
+                        {entry.suggestion.payload.summaryUpdate.content}
+                      </pre>
+                    {/if}
+                    {#if entry.suggestion.payload.reasoning}
+                      <p class="assistant-reasoning">{entry.suggestion.payload.reasoning}</p>
+                    {/if}
+                    <div class="suggestion-actions">
+                      {#if entry.suggestion.applied}
+                        <span class="suggestion-status applied">適用済み</span>
+                      {:else if entry.suggestion.dismissed}
+                        <span class="suggestion-status cancelled">キャンセル済み</span>
+                        <button
+                          type="button"
+                          class="secondary"
+                          on:click={() => restoreSuggestion(entry.suggestion.id)}
+                        >
+                          再表示
+                        </button>
+                      {:else}
+                        <button
+                          type="button"
+                          on:click={() => applySuggestion(entry.suggestion, "replace")}
+                          disabled={
+                            !hasSuggestionContent(entry.suggestion.payload.summaryUpdate) || chatBusy()
+                          }
+                        >
+                          置き換え
+                        </button>
+                        <button
+                          type="button"
+                          on:click={() => applySuggestion(entry.suggestion, "append")}
+                          disabled={
+                            !hasSuggestionContent(entry.suggestion.payload.summaryUpdate) || chatBusy()
+                          }
+                        >
+                          追記
+                        </button>
+                        <button
+                          type="button"
+                          class="secondary"
+                          on:click={() => dismissSuggestion(entry.suggestion.id)}
+                        >
+                          キャンセル
+                        </button>
+                      {/if}
+                    </div>
+                  </article>
+                </li>
               {/if}
-              {#if suggestion.diff.length > 0}
-                <pre class="diff-lines">
-                  {#each suggestion.diff as line, index (index)}
-                    <code class={`diff-line ${line.type}`}>{formatDiffLine(line)}</code>
-                  {/each}
-                </pre>
-              {:else if hasSuggestionContent(suggestion.payload.summaryUpdate)}
-                <pre class="raw-suggestion">{suggestion.payload.summaryUpdate.content}</pre>
-              {/if}
-              {#if suggestion.payload.reasoning}
-                <p class="assistant-reasoning">{suggestion.payload.reasoning}</p>
-              {/if}
-              <div class="suggestion-actions">
-                <button
-                  type="button"
-                  on:click={() => applySuggestion(suggestion, "replace")}
-                  disabled={!hasSuggestionContent(suggestion.payload.summaryUpdate) || chatBusy()}
-                >
-                  置き換え
-                </button>
-                <button
-                  type="button"
-                  on:click={() => applySuggestion(suggestion, "append")}
-                  disabled={!hasSuggestionContent(suggestion.payload.summaryUpdate) || chatBusy()}
-                >
-                  追記
-                </button>
-                <button
-                  type="button"
-                  class="secondary"
-                  on:click={() => dismissSuggestion(suggestion.id)}
-                >
-                  キャンセル
-                </button>
-              </div>
-            </li>
+            {/if}
           {/each}
         </ul>
-      </section>
-    {/if}
+      {/if}
+    </div>
+
+    <div class="chat-input">
+      <textarea
+        class="prompt-input"
+        placeholder="LLM への指示を書きます"
+        rows="2"
+        bind:value={prompt}
+        disabled={chatBusy()}
+      />
+      <button class="prompt-submit" type="button" on:click={handlePromptSubmit} disabled={chatBusy()}>
+        送信
+      </button>
+    </div>
   </section>
 
   <section class="pane editor" aria-label="Markdown 編集">
@@ -453,6 +540,10 @@
     gap: 1.5rem;
     width: 100%;
     align-items: stretch;
+    flex: 1 1 0;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
   }
 
   .summary-workspace .pane {
@@ -466,10 +557,27 @@
     flex-direction: column;
     gap: 0.75rem;
     min-height: 0;
+    overflow: hidden;
   }
 
   .summary-workspace .pane.chat {
     flex: 0.95 1 0;
+    min-height: 0;
+  }
+
+  .summary-workspace .chat-body {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  .summary-workspace .chat-input {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
 
   .summary-workspace .pane.editor {
@@ -479,6 +587,7 @@
   .summary-workspace .pane.preview {
     flex: 1.1 1 0;
     max-width: 600px;
+    min-height: 0;
   }
 
   @media (max-width: 1400px) {
@@ -535,13 +644,17 @@
   }
 
   .summary-workspace .prompt-input {
-    min-height: 14rem;
+    min-height: 3.8rem;
+    height: 3.8rem;
     resize: vertical;
     font-family: inherit;
     font-size: 0.95rem;
     padding: 0.85rem;
     border-radius: 0.75rem;
     border: 1px solid var(--surface-border);
+    line-height: 1.4;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .summary-workspace .initial-assistant-message {
@@ -595,28 +708,46 @@
     cursor: not-allowed;
   }
 
-  .summary-workspace .suggestions {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .summary-workspace .suggestions h3 {
-    margin: 0;
-    font-size: 0.9rem;
-    color: var(--text-secondary);
-  }
-
-  .summary-workspace .suggestions ul {
+  .summary-workspace .chat-log {
     list-style: none;
     margin: 0;
     padding: 0;
     display: flex;
     flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .summary-workspace .chat-entry {
+    display: flex;
+    flex-direction: column;
     gap: 0.5rem;
   }
 
-  .summary-workspace .suggestions li {
+  .summary-workspace .chat-entry.user {
+    align-items: flex-end;
+  }
+
+  .summary-workspace .chat-user-label {
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+  }
+
+  .summary-workspace .chat-user-message {
+    margin: 0;
+    max-width: 100%;
+    padding: 0.6rem 0.9rem;
+    border-radius: 1rem;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.9rem;
+    white-space: pre-wrap;
+  }
+
+  .summary-workspace .chat-entry.assistant {
+    align-items: stretch;
+  }
+
+  .summary-workspace .suggestion-card {
     border: 1px solid var(--surface-border);
     border-radius: 0.75rem;
     padding: 0.75rem;
@@ -628,6 +759,7 @@
 
   .summary-workspace .suggestion-actions {
     display: flex;
+    align-items: center;
     gap: 0.5rem;
   }
 
@@ -650,6 +782,20 @@
     opacity: 0.9;
   }
 
+  .summary-workspace .suggestion-status {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+  }
+
+  .summary-workspace .suggestion-status.applied {
+    font-weight: 600;
+  }
+
+  .summary-workspace .suggestion-status.cancelled {
+    color: var(--text-tertiary);
+    font-style: italic;
+  }
+
   .summary-workspace .status-list {
     display: flex;
     flex-direction: column;
@@ -670,9 +816,12 @@
   }
 
   .summary-workspace .preview-body {
-    flex: 1;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
     overflow: auto;
     min-height: 0;
+    height: 100%;
   }
 
   .summary-workspace .suggestion-header {
@@ -686,11 +835,6 @@
     margin: 0;
     font-weight: 600;
     font-size: 0.9rem;
-  }
-
-  .summary-workspace .assistant-mode {
-    font-size: 0.75rem;
-    color: var(--text-tertiary);
   }
 
   .summary-workspace .assistant-selection {

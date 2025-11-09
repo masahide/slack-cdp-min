@@ -111,6 +111,7 @@
         on:input={handleInput}
         on:keydown={handleKeydown}
         spellcheck="false"
+        rows="12"
       />
     </label>
   </section>
@@ -121,6 +122,8 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   .shell-header {
@@ -140,21 +143,29 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   .textarea-label {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   .summary-input {
-    min-height: 50rem;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
     font-family: var(--font-mono, ui-monospace);
     font-size: 0.95rem;
     padding: 0.75rem;
     border-radius: 0.5rem;
     border: 1px solid var(--border-color, #cbd5e1);
-    resize: vertical;
+    resize: none;
+    box-sizing: border-box;
+    overflow: auto;
   }
 </style>

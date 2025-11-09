@@ -703,6 +703,8 @@
     padding: 2rem;
     max-width: 1100px;
     margin: 0 auto;
+    min-height: 100vh;
+    box-sizing: border-box;
   }
 
   .back-link {
@@ -1005,12 +1007,16 @@
   .layout-summary-edit {
     max-width: 1600px;
     width: min(100%, 1600px);
+    min-height: 100vh;
   }
 
   .layout-summary-edit .summary-edit-container {
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .layout-summary-edit .summary-error {
